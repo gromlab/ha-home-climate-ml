@@ -1,0 +1,24 @@
+{
+    "config": {
+        "step": {
+            "user": {
+                "title": "Home Climate ML",
+                "description": "Set up per-zone heat pump offset correction. No external credentials required — this integration reads directly from your HA state machine.\n\nConfigure zones and sensors after setup via the integration's Configure button."
+            }
+        },
+        "error": {
+            "unknown": "Unexpected error. Check your HA logs for details."
+        },
+        "abort": {
+            "already_configured": "Home Climate ML is already configured. Use the Configure button to adjust zone settings."
+        }
+    },
+    "options": {
+        "step": {
+            "init": {
+                "title": "Zone Configuration",
+                "description": "Per-zone sensor and schedule configuration will be available in Phase 1."
+            }
+        }
+    }
+}

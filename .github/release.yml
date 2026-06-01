@@ -1,0 +1,12 @@
+changelog:
+  categories:
+    - title: '💥 Breaking Changes'
+      labels: ['breaking-change', 'Breaking Change']
+    - title: '✨ New Features'
+      labels: ['feature', 'new-feature']
+    - title: '🐛 Bug Fixes'
+      labels: ['bug', 'bugfix']
+    - title: '🧰 Maintenance'
+      labels: ['chore', 'dependencies', 'github_actions']
+  exclude:
+    labels: ['ignore-for-release']
