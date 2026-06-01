@@ -1,0 +1,10 @@
+{
+    "domain": "home_climate_ml",
+    "name": "Home Climate ML",
+    "codeowners": ["@gromlab"],
+    "config_flow": true,
+    "documentation": "https://github.com/gromlab/ha-home-climate-ml",
+    "iot_class": "local_polling",
+    "issue_tracker": "https://github.com/gromlab/ha-home-climate-ml/issues",
+    "version": "1.0.0"
+}
