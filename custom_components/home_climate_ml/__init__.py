@@ -23,9 +23,8 @@ if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
     from homeassistant.config_entries import ConfigEntry
 
-PLATFORMS: list[Platform] = [
-    Platform.SENSOR,
-]
+# No platform files yet — populated in Phase 1 when climate/sensor modules are added
+PLATFORMS: list[Platform] = []
 
 type HomeClimateMlConfigEntry = ConfigEntry  # runtime_data: HomeClimateMlCoordinator
 
