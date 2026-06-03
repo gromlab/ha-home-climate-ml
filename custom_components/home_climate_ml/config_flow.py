@@ -1,76 +1,67 @@
 """Config flow for Home Climate ML."""
-
 from __future__ import annotations
 
+from typing import Any
+
 import voluptuous as vol
-from homeassistant import config_entries
-from homeassistant.helpers import selector
 
-from .const import DOMAIN, LOGGER
+from homeassistant.config_entries import ConfigFlow, ConfigFlowResult, OptionsFlow
+from homeassistant.core import callback
+
+from .const import CONF_SCHEDULE_PATH, DEFAULT_SCHEDULE_PATH, DOMAIN, LOGGER
+from .schedule import ScheduleError, load_schedule
 
 
-class HomeClimateMlFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
-    """Config flow for Home Climate ML."""
-
+class HomeClimateMlFlowHandler(ConfigFlow, domain=DOMAIN):
     VERSION = 1
 
     async def async_step_user(
-        self,
-        user_input: dict | None = None,
-    ) -> config_entries.ConfigFlowResult:
-        """Handle the initial user step.
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        await self.async_set_unique_id(DOMAIN)
+        self._abort_if_unique_id_configured()
 
-        This integration reads from the HA state machine directly — no external
-        credentials or host configuration needed at setup time. Zone configuration
-        is done via the Options flow after the entry is created.
-        """
         if user_input is not None:
-            # Prevent duplicate installs — only one instance supported
-            await self.async_set_unique_id(DOMAIN)
-            self._abort_if_unique_id_configured()
+            return self.async_create_entry(title="Home Climate ML", data={})
 
-            return self.async_create_entry(
-                title="Home Climate ML",
-                data=user_input,
-            )
-
-        return self.async_show_form(
-            step_id="user",
-            data_schema=vol.Schema({}),
-            description_placeholders={},
-        )
+        return self.async_show_form(step_id="user", data_schema=vol.Schema({}))
 
     @staticmethod
-    def async_get_options_flow(
-        config_entry: config_entries.ConfigEntry,
-    ) -> HomeClimateMlOptionsFlowHandler:
-        """Return the options flow handler."""
-        return HomeClimateMlOptionsFlowHandler(config_entry)
+    @callback
+    def async_get_options_flow(config_entry) -> HomeClimateMlOptionsFlowHandler:
+        return HomeClimateMlOptionsFlowHandler()
 
 
-class HomeClimateMlOptionsFlowHandler(config_entries.OptionsFlow):
-    """Options flow for Home Climate ML.
-
-    Phase 1 will add per-zone configuration here:
-    - Head sensor entity selection
-    - External/reference sensor entity selection
-    - Offset bounds (min/max °C)
-    - Schedule entity linkage
-    """
-
-    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
-        """Initialize options flow."""
-        self.config_entry = config_entry
-
+class HomeClimateMlOptionsFlowHandler(OptionsFlow):
     async def async_step_init(
-        self,
-        user_input: dict | None = None,
-    ) -> config_entries.ConfigFlowResult:
-        """Manage integration options."""
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        errors: dict[str, str] = {}
+
+        current_path = self.config_entry.options.get(
+            CONF_SCHEDULE_PATH,
+            self.hass.config.path("climate_schedules.yaml"),
+        )
+
         if user_input is not None:
-            return self.async_create_entry(title="", data=user_input)
+            path = user_input[CONF_SCHEDULE_PATH]
+            try:
+                await self.hass.async_add_executor_job(load_schedule, path)
+            except FileNotFoundError:
+                errors[CONF_SCHEDULE_PATH] = "schedule_not_found"
+            except ScheduleError as exc:
+                LOGGER.error("Schedule validation error: %s", exc)
+                errors[CONF_SCHEDULE_PATH] = "schedule_invalid"
+            except Exception:  # noqa: BLE001
+                errors[CONF_SCHEDULE_PATH] = "unknown"
+
+            if not errors:
+                return self.async_create_entry(title="", data=user_input)
 
         return self.async_show_form(
             step_id="init",
-            data_schema=vol.Schema({}),
+            data_schema=vol.Schema({
+                vol.Required(CONF_SCHEDULE_PATH, default=current_path): str,
+            }),
+            errors=errors,
         )

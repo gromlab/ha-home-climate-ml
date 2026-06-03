@@ -1,24 +1,29 @@
 {
-    "config": {
-        "step": {
-            "user": {
-                "title": "Home Climate ML",
-                "description": "Set up per-zone heat pump offset correction. No external credentials required — this integration reads directly from your HA state machine.\n\nConfigure zones and sensors after setup via the integration's Configure button."
-            }
-        },
-        "error": {
-            "unknown": "Unexpected error. Check your HA logs for details."
-        },
-        "abort": {
-            "already_configured": "Home Climate ML is already configured. Use the Configure button to adjust zone settings."
-        }
+  "config": {
+    "step": {
+      "user": {
+        "title": "Home Climate ML",
+        "description": "Adds the Home Climate ML integration. No credentials required — reads zone temperatures and commands heat pump heads directly through Home Assistant. Configure the schedule file path in Options after setup."
+      }
     },
-    "options": {
-        "step": {
-            "init": {
-                "title": "Zone Configuration",
-                "description": "Per-zone sensor and schedule configuration will be available in Phase 1."
-            }
-        }
+    "abort": {
+      "already_configured": "Home Climate ML is already configured"
     }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Home Climate ML Options",
+        "description": "Per-zone schedules are loaded from a YAML file on the Home Assistant host.",
+        "data": {
+          "schedule_yaml_path": "Schedule YAML path"
+        }
+      }
+    },
+    "error": {
+      "schedule_not_found": "File not found — check the path and ensure the file exists on the HA host",
+      "schedule_invalid": "Schedule YAML is invalid — check zone coverage and setpoint ranges",
+      "unknown": "Unexpected error validating the schedule file"
+    }
+  }
 }
