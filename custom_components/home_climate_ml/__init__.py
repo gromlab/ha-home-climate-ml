@@ -1,6 +1,7 @@
 """Home Climate ML — per-zone heat pump offset correction and scheduling."""
 from __future__ import annotations
 
+import os
 from datetime import timedelta
 from typing import TYPE_CHECKING
 
@@ -20,6 +21,47 @@ PLATFORMS: list[Platform] = [Platform.CLIMATE]
 
 type HomeClimateMlConfigEntry = ConfigEntry
 
+_DEFAULT_SCHEDULE_YAML = """\
+# Home Climate ML — default schedule
+# Adjust setpoints (°C) and time blocks to your preference.
+# Blocks must cover the full 24-hour day with no gaps.
+schedules:
+  main_floor:
+    weekday:
+      - { start: "00:00", end: "08:00", mode: cool, setpoint_c: 22 }
+      - { start: "08:00", end: "17:00", mode: off }
+      - { start: "17:00", end: "24:00", mode: cool, setpoint_c: 22 }
+    weekend:
+      - { start: "00:00", end: "24:00", mode: cool, setpoint_c: 22 }
+  front_bedroom:
+    weekday:
+      - { start: "00:00", end: "07:00", mode: cool, setpoint_c: 21 }
+      - { start: "07:00", end: "21:00", mode: off }
+      - { start: "21:00", end: "24:00", mode: cool, setpoint_c: 21 }
+    weekend:
+      - { start: "00:00", end: "24:00", mode: cool, setpoint_c: 21 }
+  middle_bedroom:
+    weekday:
+      - { start: "00:00", end: "07:00", mode: cool, setpoint_c: 21 }
+      - { start: "07:00", end: "18:00", mode: off }
+      - { start: "18:00", end: "24:00", mode: cool, setpoint_c: 21 }
+    weekend:
+      - { start: "00:00", end: "24:00", mode: cool, setpoint_c: 21 }
+  rear_bedroom:
+    weekday:
+      - { start: "00:00", end: "07:00", mode: cool, setpoint_c: 21 }
+      - { start: "07:00", end: "21:00", mode: off }
+      - { start: "21:00", end: "24:00", mode: cool, setpoint_c: 21 }
+    weekend:
+      - { start: "00:00", end: "24:00", mode: cool, setpoint_c: 21 }
+"""
+
+
+def _write_default_schedule(path: str) -> None:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write(_DEFAULT_SCHEDULE_YAML)
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -30,6 +72,11 @@ async def async_setup_entry(
         hass.config.path("climate_schedules.yaml"),
     )
     db_path = hass.config.path("home_climate_ml", "decisions.db")
+
+    # Bootstrap default schedule on first run if the file doesn't exist yet
+    if not await hass.async_add_executor_job(os.path.exists, schedule_path):
+        LOGGER.info("No schedule file found at %s — writing default", schedule_path)
+        await hass.async_add_executor_job(_write_default_schedule, schedule_path)
 
     # Load schedule (blocking I/O in executor)
     try:
