@@ -1,5 +1,8 @@
 # Changelog
 
+## [0.2.1] — Default schedule bootstrap
+- Auto-create `/config/climate_schedules.yaml` on first `async_setup_entry` if the file doesn't exist
+
 ## [0.2.0] — Phase 1 logic
 - Decision loop: 5-minute offset correction per zone
 - YAML schedule loader with full validation
