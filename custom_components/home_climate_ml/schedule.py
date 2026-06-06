@@ -35,7 +35,12 @@ def _validate_zone_schedule(zone_id: str, day_type: str, blocks: list[dict]) -> 
     parsed: list[ScheduleBlock] = []
     for i, b in enumerate(blocks):
         try:
-            mode = str(b["mode"]).lower()
+            raw_mode = b["mode"]
+            # YAML parses bare `off`/`no` as False and `on`/`yes` as True
+            if raw_mode is False:
+                mode = "off"
+            else:
+                mode = str(raw_mode).lower()
             if mode not in ("off", "cool"):
                 raise ScheduleError(f"Invalid mode '{mode}'")
             setpoint_c: float | None = None
