@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.2.2] — Zone enable switches
+- Per-zone enable/disable switch (`ML — {Zone} Enabled`) — state persists across restarts
+- Master switch (`ML — All Zones Enabled`) — turns all zones on or off in one toggle
+- Disabled zones skip all commands; coordinator marks them `schedule_source: disabled`
+
 ## [0.2.1] — Default schedule bootstrap
 - Auto-create `/config/climate_schedules.yaml` on first `async_setup_entry` if the file doesn't exist
 

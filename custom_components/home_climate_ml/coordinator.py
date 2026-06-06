@@ -43,6 +43,7 @@ class ZoneData(TypedDict):
     schedule_source: str
     last_command_c: float | None
     error: str | None
+    enabled: bool
 
 
 class HomeClimateMlCoordinator(DataUpdateCoordinator[dict[str, ZoneData]]):
@@ -65,6 +66,22 @@ class HomeClimateMlCoordinator(DataUpdateCoordinator[dict[str, ZoneData]]):
         self._force_cool_active: set[str] = set()
         self._last_hard_alert: dict[str, datetime] = {}
         self._last_sensor_values: dict[str, Any] = {}
+        self._zone_enabled: dict[str, bool] = {zone_id: True for zone_id in ZONES}
+
+    # ------------------------------------------------------------------ zone enable
+
+    @property
+    def zone_enabled(self) -> dict[str, bool]:
+        return self._zone_enabled
+
+    def set_zone_enabled(self, zone_id: str, enabled: bool) -> None:
+        self._zone_enabled[zone_id] = enabled
+        LOGGER.debug("Zone %s enabled=%s", zone_id, enabled)
+
+    def set_all_zones_enabled(self, enabled: bool) -> None:
+        for zone_id in ZONES:
+            self._zone_enabled[zone_id] = enabled
+        LOGGER.info("All zones enabled=%s", enabled)
 
     # ------------------------------------------------------------------ overrides
 
@@ -139,6 +156,7 @@ class HomeClimateMlCoordinator(DataUpdateCoordinator[dict[str, ZoneData]]):
                     target_setpoint_c=DEFAULT_SETPOINT_C, target_mode="off",
                     corrected_setpoint_c=None, override_active=False,
                     schedule_source="error", last_command_c=None, error=str(exc),
+                    enabled=self._zone_enabled.get(zone_id, True),
                 )
 
         # Log sense-only zones (no commands)
@@ -153,6 +171,15 @@ class HomeClimateMlCoordinator(DataUpdateCoordinator[dict[str, ZoneData]]):
     async def _process_zone(
         self, zone_id: str, zone_cfg: dict, now: datetime
     ) -> ZoneData:
+        if not self._zone_enabled.get(zone_id, True):
+            return ZoneData(
+                ext_temp_c=None, head_temp_c=None, offset_c=None,
+                target_setpoint_c=DEFAULT_SETPOINT_C, target_mode="off",
+                corrected_setpoint_c=None, override_active=False,
+                schedule_source="disabled", last_command_c=None, error=None,
+                enabled=False,
+            )
+
         external_entity = zone_cfg["external"]
         head_entity = zone_cfg["head"]
 
@@ -292,6 +319,7 @@ class HomeClimateMlCoordinator(DataUpdateCoordinator[dict[str, ZoneData]]):
             schedule_source=schedule_source,
             last_command_c=corrected_setpoint_c if command_issued else None,
             error=None,
+            enabled=True,
         )
 
     async def _handle_hard_alert(self, zone_id: str, ext_temp_c: float) -> None:
