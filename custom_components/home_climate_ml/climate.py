@@ -76,6 +76,7 @@ class HomeClimateMlZone(CoordinatorEntity[HomeClimateMlCoordinator], ClimateEnti
         if not (d := self.zone_data):
             return {}
         return {
+            "enabled": d.get("enabled", True),
             "offset_c": d.get("offset_c"),
             "corrected_setpoint_c": d.get("corrected_setpoint_c"),
             "head_temp_c": d.get("head_temp_c"),
