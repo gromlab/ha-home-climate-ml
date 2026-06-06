@@ -29,28 +29,28 @@ schedules:
   main_floor:
     weekday:
       - { start: "00:00", end: "08:00", mode: cool, setpoint_c: 22 }
-      - { start: "08:00", end: "17:00", mode: off }
+      - { start: "08:00", end: "17:00", mode: "off" }
       - { start: "17:00", end: "24:00", mode: cool, setpoint_c: 22 }
     weekend:
       - { start: "00:00", end: "24:00", mode: cool, setpoint_c: 22 }
   front_bedroom:
     weekday:
       - { start: "00:00", end: "07:00", mode: cool, setpoint_c: 21 }
-      - { start: "07:00", end: "21:00", mode: off }
+      - { start: "07:00", end: "21:00", mode: "off" }
       - { start: "21:00", end: "24:00", mode: cool, setpoint_c: 21 }
     weekend:
       - { start: "00:00", end: "24:00", mode: cool, setpoint_c: 21 }
   middle_bedroom:
     weekday:
       - { start: "00:00", end: "07:00", mode: cool, setpoint_c: 21 }
-      - { start: "07:00", end: "18:00", mode: off }
+      - { start: "07:00", end: "18:00", mode: "off" }
       - { start: "18:00", end: "24:00", mode: cool, setpoint_c: 21 }
     weekend:
       - { start: "00:00", end: "24:00", mode: cool, setpoint_c: 21 }
   rear_bedroom:
     weekday:
       - { start: "00:00", end: "07:00", mode: cool, setpoint_c: 21 }
-      - { start: "07:00", end: "21:00", mode: off }
+      - { start: "07:00", end: "21:00", mode: "off" }
       - { start: "21:00", end: "24:00", mode: cool, setpoint_c: 21 }
     weekend:
       - { start: "00:00", end: "24:00", mode: cool, setpoint_c: 21 }

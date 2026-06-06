@@ -35,7 +35,7 @@ def _validate_zone_schedule(zone_id: str, day_type: str, blocks: list[dict]) -> 
     parsed: list[ScheduleBlock] = []
     for i, b in enumerate(blocks):
         try:
-            mode = b["mode"].lower()
+            mode = str(b["mode"]).lower()
             if mode not in ("off", "cool"):
                 raise ScheduleError(f"Invalid mode '{mode}'")
             setpoint_c: float | None = None
