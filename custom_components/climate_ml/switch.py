@@ -1,4 +1,4 @@
-"""Switch platform for Home Climate ML — per-zone and master enable/disable."""
+"""Switch platform for ClimateML — per-zone and master enable/disable."""
 from __future__ import annotations
 
 from homeassistant.components.switch import SwitchEntity

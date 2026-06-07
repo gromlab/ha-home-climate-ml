@@ -1,4 +1,4 @@
-"""Config flow for Home Climate ML."""
+"""Config flow for ClimateML."""
 from __future__ import annotations
 
 from typing import Any
@@ -22,7 +22,7 @@ class HomeClimateMlFlowHandler(ConfigFlow, domain=DOMAIN):
         self._abort_if_unique_id_configured()
 
         if user_input is not None:
-            return self.async_create_entry(title="Home Climate ML", data={})
+            return self.async_create_entry(title="ClimateML", data={})
 
         return self.async_show_form(step_id="user", data_schema=vol.Schema({}))
 

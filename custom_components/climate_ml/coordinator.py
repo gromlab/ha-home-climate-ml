@@ -1,4 +1,4 @@
-"""Coordinator for Home Climate ML."""
+"""Coordinator for ClimateML."""
 from __future__ import annotations
 
 import asyncio

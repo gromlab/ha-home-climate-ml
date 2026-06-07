@@ -14,4 +14,3 @@ jobs:
         uses: "hacs/action@main"
         with:
           category: "integration"
-          ignore: brands  # Remove once brand/icon.png exists

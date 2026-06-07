@@ -1,8 +1,8 @@
-"""Constants for Home Climate ML."""
+"""Constants for ClimateML."""
 from __future__ import annotations
 import logging
 
-DOMAIN = "home_climate_ml"
+DOMAIN = "climate_ml"
 LOGGER = logging.getLogger(__package__)
 UPDATE_INTERVAL_MINUTES = 5
 

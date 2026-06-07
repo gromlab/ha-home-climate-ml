@@ -1,4 +1,4 @@
-"""YAML schedule loader for Home Climate ML."""
+"""YAML schedule loader for ClimateML."""
 from __future__ import annotations
 
 import re
