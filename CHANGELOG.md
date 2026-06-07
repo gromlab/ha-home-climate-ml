@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.3.0] — Config flow refactor
+- Full options flow: zones, schedules, and tuning constants now configured entirely via HA UI — no YAML file
+- Menu-based options flow: add/edit/remove zones, manage weekday/weekend schedule blocks per zone
+- Per-zone sensor entities: room temperature, offset, corrected setpoint (diagnostic)
+- Master switch semantics fixed: AND gate with per-zone switches; survives options reload, resets to OFF on HA restart
+- Per-zone switch gains `DeviceInfo` grouping (climate + 3 sensors + switch shown as one device)
+- `async_migrate_entry` v1→v2: preserves SQLite decision history and entity registry on upgrade
+- Removed YAML schedule dependency entirely
+- Version bump to 0.3.0 (entry version 2)
+
 ## [0.2.3] — Rename to ClimateML
 - Integration renamed from "Home Climate ML" to "ClimateML"
 - Domain changed from `home_climate_ml` to `climate_ml`

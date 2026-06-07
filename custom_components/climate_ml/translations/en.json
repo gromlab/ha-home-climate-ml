@@ -3,27 +3,147 @@
     "step": {
       "user": {
         "title": "ClimateML",
-        "description": "Adds the ClimateML integration. No credentials required — reads zone temperatures and commands heat pump heads directly through Home Assistant. Configure the schedule file path in Options after setup."
+        "description": "Add the ClimateML integration. No credentials required — reads zone temperatures and commands heat pump heads directly via Home Assistant. Configure zones, schedules, and tuning parameters in Options after setup."
       }
     },
     "abort": {
-      "already_configured": "ClimateML is already configured"
+      "already_configured": "ClimateML is already configured",
+      "single_instance_allowed": "Only one ClimateML instance is allowed"
     }
   },
   "options": {
     "step": {
       "init": {
         "title": "ClimateML Options",
-        "description": "Per-zone schedules are loaded from a YAML file on the Home Assistant host.",
+        "menu_options": {
+          "global_settings": "Global settings",
+          "add_zone": "Add zone",
+          "manage_zones": "Manage zones"
+        }
+      },
+      "global_settings": {
+        "title": "Global Settings",
         "data": {
-          "schedule_yaml_path": "Schedule YAML path"
+          "update_interval_minutes": "Update interval (minutes)",
+          "override_duration_minutes": "Override duration (minutes)",
+          "setpoint_tolerance_c": "Setpoint tolerance (°C)",
+          "offset_clamp_c": "Max offset clamp (°C)",
+          "setpoint_min_c": "Minimum setpoint (°C)",
+          "setpoint_max_c": "Maximum setpoint (°C)",
+          "default_setpoint_c": "Default setpoint (°C)",
+          "force_cool_threshold_c": "Force-cool trigger temperature (°C)",
+          "force_cool_clear_c": "Force-cool clear temperature (°C)",
+          "hallway_sensor": "Hallway temperature sensor (optional)",
+          "outdoor_sensor": "Outdoor temperature sensor (optional)"
+        },
+        "data_description": {
+          "update_interval_minutes": "How often the decision loop runs",
+          "override_duration_minutes": "How long a manual temperature override lasts",
+          "setpoint_tolerance_c": "Minimum change before commanding the heat pump",
+          "offset_clamp_c": "Maximum offset the ML model can apply",
+          "force_cool_threshold_c": "Override all zones to cool above this outdoor temperature",
+          "force_cool_clear_c": "Release force-cool once outdoor temperature drops below this",
+          "hallway_sensor": "Used as a whole-house reference temperature",
+          "outdoor_sensor": "Used for force-cool threshold logic"
+        }
+      },
+      "add_zone": {
+        "title": "Add Zone",
+        "data": {
+          "name": "Zone name",
+          "head_entity": "Heat pump head (climate entity)",
+          "sensor_entity": "Room temperature sensor"
+        },
+        "data_description": {
+          "name": "Display name — also used to generate the zone ID",
+          "head_entity": "The climate entity controlling this zone's heat pump head",
+          "sensor_entity": "The sensor that reports the actual room temperature"
+        }
+      },
+      "manage_zones": {
+        "title": "Manage Zones",
+        "data": {
+          "zone_id": "Select zone"
+        }
+      },
+      "zone_menu": {
+        "title": "Zone Options",
+        "menu_options": {
+          "edit_zone": "Edit zone settings",
+          "manage_schedule": "Manage schedule",
+          "delete_zone": "Delete zone"
+        }
+      },
+      "edit_zone": {
+        "title": "Edit Zone",
+        "data": {
+          "name": "Zone name",
+          "head_entity": "Heat pump head (climate entity)",
+          "sensor_entity": "Room temperature sensor"
+        }
+      },
+      "delete_zone": {
+        "title": "Delete Zone",
+        "description": "Delete zone \"{zone_name}\"? This removes the zone and all its schedule blocks. The integration will reload and entity history will be retained.",
+        "data": {
+          "confirm": "Yes, delete this zone"
+        }
+      },
+      "manage_schedule": {
+        "title": "Manage Schedule",
+        "menu_options": {
+          "schedule_weekday": "Weekday schedule",
+          "schedule_weekend": "Weekend schedule"
+        }
+      },
+      "schedule_blocks": {
+        "title": "Schedule Blocks",
+        "data": {
+          "choice": "Action"
+        }
+      },
+      "add_block": {
+        "title": "Add Schedule Block",
+        "data": {
+          "start": "Start time",
+          "end": "End time",
+          "mode": "Mode",
+          "setpoint_c": "Target temperature (°C)"
+        },
+        "data_description": {
+          "setpoint_c": "Required when mode is cool"
+        }
+      },
+      "edit_block": {
+        "title": "Edit Schedule Block",
+        "data": {
+          "start": "Start time",
+          "end": "End time",
+          "mode": "Mode",
+          "setpoint_c": "Target temperature (°C)"
+        },
+        "data_description": {
+          "setpoint_c": "Required when mode is cool"
         }
       }
     },
     "error": {
-      "schedule_not_found": "File not found — check the path and ensure the file exists on the HA host",
-      "schedule_invalid": "Schedule YAML is invalid — check zone coverage and setpoint ranges",
-      "unknown": "Unexpected error validating the schedule file"
+      "name_required": "Zone name cannot be empty",
+      "invalid_block": "Invalid block — check that start is before end, mode is valid, and setpoint is set for cool mode",
+      "unknown": "Unexpected error"
+    },
+    "abort": {
+      "no_zones": "No zones configured — add a zone first",
+      "zone_not_found": "Zone not found",
+      "block_not_found": "Schedule block not found"
+    }
+  },
+  "selector": {
+    "schedule_mode": {
+      "options": {
+        "off": "Off",
+        "cool": "Cool"
+      }
     }
   }
 }
