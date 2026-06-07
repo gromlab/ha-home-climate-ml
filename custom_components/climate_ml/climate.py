@@ -2,13 +2,14 @@
 from __future__ import annotations
 
 from homeassistant.components.climate import ClimateEntity, ClimateEntityFeature, HVACMode
-from homeassistant.const import UnitOfTemperature
-from homeassistant.core import HomeAssistant, callback
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import UnitOfTemperature
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DEFAULT_SETPOINT_C, DOMAIN, LOGGER, ZONES
+from .const import DOMAIN
 from .coordinator import HomeClimateMlCoordinator
 
 
@@ -19,32 +20,37 @@ async def async_setup_entry(
 ) -> None:
     coordinator: HomeClimateMlCoordinator = entry.runtime_data
     async_add_entities(
-        HomeClimateMlZone(coordinator, zone_id, zone_cfg)
-        for zone_id, zone_cfg in ZONES.items()
+        ClimateMLZone(coordinator, zone)
+        for zone in coordinator.zones
     )
 
 
-class HomeClimateMlZone(CoordinatorEntity[HomeClimateMlCoordinator], ClimateEntity):
+class ClimateMLZone(CoordinatorEntity[HomeClimateMlCoordinator], ClimateEntity):
     _attr_hvac_modes = [HVACMode.OFF, HVACMode.COOL]
     _attr_temperature_unit = UnitOfTemperature.CELSIUS
     _attr_supported_features = ClimateEntityFeature.TARGET_TEMPERATURE
     _attr_should_poll = False
-    _attr_min_temp = 16.0
-    _attr_max_temp = 28.0
     _attr_target_temperature_step = 0.5
 
-    def __init__(
-        self,
-        coordinator: HomeClimateMlCoordinator,
-        zone_id: str,
-        zone_cfg: dict,
-    ) -> None:
+    def __init__(self, coordinator: HomeClimateMlCoordinator, zone: dict) -> None:
         super().__init__(coordinator)
-        self._zone_id = zone_id
-        self._zone_cfg = zone_cfg
-        display_name = zone_cfg["name"]
-        self._attr_name = f"ML — {display_name}"
-        self._attr_unique_id = f"{DOMAIN}_{zone_id}"
+        self._zone_id = zone["id"]
+        self._attr_name = f"ML — {zone['name']}"
+        self._attr_unique_id = f"{DOMAIN}_{self._zone_id}"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, self._zone_id)},
+            name=f"ClimateML — {zone['name']}",
+            manufacturer="ClimateML",
+            model="Zone Controller",
+        )
+
+    @property
+    def min_temp(self) -> float:
+        return self.coordinator.params.get("setpoint_min_c", 16.0)
+
+    @property
+    def max_temp(self) -> float:
+        return self.coordinator.params.get("setpoint_max_c", 28.0)
 
     @property
     def zone_data(self):
@@ -60,9 +66,10 @@ class HomeClimateMlZone(CoordinatorEntity[HomeClimateMlCoordinator], ClimateEnti
 
     @property
     def target_temperature(self) -> float | None:
+        default = self.coordinator.params.get("default_setpoint_c", 21.0)
         if d := self.zone_data:
-            return d.get("target_setpoint_c", DEFAULT_SETPOINT_C)
-        return DEFAULT_SETPOINT_C
+            return d.get("target_setpoint_c", default)
+        return default
 
     @property
     def hvac_mode(self) -> HVACMode:
@@ -99,6 +106,7 @@ class HomeClimateMlZone(CoordinatorEntity[HomeClimateMlCoordinator], ClimateEnti
         self.async_write_ha_state()
 
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
-        current_setpoint = self.target_temperature or DEFAULT_SETPOINT_C
+        default = self.coordinator.params.get("default_setpoint_c", 21.0)
+        current_setpoint = self.target_temperature or default
         self.coordinator.set_override(self._zone_id, current_setpoint, hvac_mode.value)
         self.async_write_ha_state()
