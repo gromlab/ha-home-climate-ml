@@ -34,7 +34,8 @@
           "force_cool_threshold_c": "Force-cool trigger temperature (°C)",
           "force_cool_clear_c": "Force-cool clear temperature (°C)",
           "hallway_sensor": "Hallway temperature sensor (optional)",
-          "outdoor_sensor": "Outdoor temperature sensor (optional)"
+          "outdoor_sensor": "Outdoor temperature sensor (optional)",
+          "_cancel": "← Cancel / go back"
         },
         "data_description": {
           "update_interval_minutes": "How often the decision loop runs",
@@ -44,7 +45,8 @@
           "force_cool_threshold_c": "Override all zones to cool above this outdoor temperature",
           "force_cool_clear_c": "Release force-cool once outdoor temperature drops below this",
           "hallway_sensor": "Used as a whole-house reference temperature",
-          "outdoor_sensor": "Used for force-cool threshold logic"
+          "outdoor_sensor": "Used for force-cool threshold logic",
+          "_cancel": "Check this and submit to discard changes and go back"
         }
       },
       "add_zone": {
@@ -52,12 +54,14 @@
         "data": {
           "name": "Zone name",
           "head_entity": "Heat pump head (climate entity)",
-          "sensor_entity": "Room temperature sensor"
+          "sensor_entity": "Room temperature sensor",
+          "_cancel": "← Cancel / go back"
         },
         "data_description": {
           "name": "Display name — also used to generate the zone ID",
           "head_entity": "The climate entity controlling this zone's heat pump head",
-          "sensor_entity": "The sensor that reports the actual room temperature"
+          "sensor_entity": "The sensor that reports the actual room temperature",
+          "_cancel": "Check this and submit to discard and go back"
         }
       },
       "manage_zones": {
@@ -71,7 +75,8 @@
         "menu_options": {
           "edit_zone": "Edit zone settings",
           "manage_schedule": "Manage schedule",
-          "delete_zone": "Delete zone"
+          "delete_zone": "Delete zone",
+          "back_to_zones": "← Back to zones"
         }
       },
       "edit_zone": {
@@ -79,7 +84,11 @@
         "data": {
           "name": "Zone name",
           "head_entity": "Heat pump head (climate entity)",
-          "sensor_entity": "Room temperature sensor"
+          "sensor_entity": "Room temperature sensor",
+          "_cancel": "← Cancel / go back"
+        },
+        "data_description": {
+          "_cancel": "Check this and submit to discard changes and go back"
         }
       },
       "delete_zone": {
@@ -93,7 +102,8 @@
         "title": "Manage Schedule",
         "menu_options": {
           "schedule_weekday": "Weekday schedule",
-          "schedule_weekend": "Weekend schedule"
+          "schedule_weekend": "Weekend schedule",
+          "back_to_zone_menu": "← Back"
         }
       },
       "schedule_blocks": {
@@ -108,10 +118,12 @@
           "start": "Start time",
           "end": "End time",
           "mode": "Mode",
-          "setpoint_c": "Target temperature (°C)"
+          "setpoint_c": "Target temperature (°C)",
+          "_cancel": "← Cancel / go back"
         },
         "data_description": {
-          "setpoint_c": "Required when mode is cool"
+          "setpoint_c": "Required when mode is cool",
+          "_cancel": "Check this and submit to discard and return to block list"
         }
       },
       "edit_block": {
@@ -120,10 +132,12 @@
           "start": "Start time",
           "end": "End time",
           "mode": "Mode",
-          "setpoint_c": "Target temperature (°C)"
+          "setpoint_c": "Target temperature (°C)",
+          "_cancel": "← Cancel / go back"
         },
         "data_description": {
-          "setpoint_c": "Required when mode is cool"
+          "setpoint_c": "Required when mode is cool",
+          "_cancel": "Check this and submit to discard and return to block list"
         }
       }
     },

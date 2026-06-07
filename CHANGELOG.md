@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.1] — Back navigation and block session editing
+- Back navigation added throughout the options flow:
+  - Zone menu and schedule menu: "← Back" as a clickable menu item
+  - Manage zones list: "← Back" as the first option
+  - All forms (global settings, add/edit zone, add/edit block): "← Cancel / go back" toggle at the bottom
+- Schedule blocks no longer close the options flow after each add/edit/delete — changes stage in memory; "← Back (save changes)" commits and closes in one step, so entire schedules can be built in one session
+- Version bump to 0.3.1
+
 ## [0.3.0] — Config flow refactor
 - Full options flow: zones, schedules, and tuning constants now configured entirely via HA UI — no YAML file
 - Menu-based options flow: add/edit/remove zones, manage weekday/weekend schedule blocks per zone
