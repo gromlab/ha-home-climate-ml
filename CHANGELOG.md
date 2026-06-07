@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.2.3] — Rename to ClimateML
+- Integration renamed from "Home Climate ML" to "ClimateML"
+- Domain changed from `home_climate_ml` to `climate_ml`
+- Brand icons added (256×256 and 512×512)
+- `ignore: brands` removed from CI
+
 ## [0.2.2] — Zone enable switches
 - Per-zone enable/disable switch (`ML — {Zone} Enabled`) — state persists across restarts
 - Master switch (`ML — All Zones Enabled`) — turns all zones on or off in one toggle

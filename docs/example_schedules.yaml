@@ -1,4 +1,4 @@
-# Home Climate ML — Example Schedule Configuration
+# ClimateML — Example Schedule Configuration
 # Copy this file to /config/climate_schedules.yaml and adjust setpoints to your preference.
 # Time blocks must cover the full 24-hour day with no gaps.
 # Setpoints must be in the range 16–28°C.

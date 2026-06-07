@@ -1,4 +1,4 @@
-"""Home Climate ML — per-zone heat pump offset correction and scheduling."""
+"""ClimateML — per-zone heat pump offset correction and scheduling."""
 from __future__ import annotations
 
 import os
@@ -22,7 +22,7 @@ PLATFORMS: list[Platform] = [Platform.CLIMATE, Platform.SWITCH]
 type HomeClimateMlConfigEntry = ConfigEntry
 
 _DEFAULT_SCHEDULE_YAML = """\
-# Home Climate ML — default schedule
+# ClimateML — default schedule
 # Adjust setpoints (°C) and time blocks to your preference.
 # Blocks must cover the full 24-hour day with no gaps.
 schedules:
@@ -71,7 +71,7 @@ async def async_setup_entry(
         CONF_SCHEDULE_PATH,
         hass.config.path("climate_schedules.yaml"),
     )
-    db_path = hass.config.path("home_climate_ml", "decisions.db")
+    db_path = hass.config.path("climate_ml", "decisions.db")
 
     # Bootstrap default schedule on first run if the file doesn't exist yet
     if not await hass.async_add_executor_job(os.path.exists, schedule_path):

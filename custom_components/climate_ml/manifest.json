@@ -1,10 +1,10 @@
 {
-    "domain": "home_climate_ml",
-    "name": "Home Climate ML",
+    "domain": "climate_ml",
+    "name": "ClimateML",
     "codeowners": ["@gromlab"],
     "config_flow": true,
     "documentation": "https://github.com/gromlab/ha-home-climate-ml",
     "iot_class": "cloud_polling",
     "issue_tracker": "https://github.com/gromlab/ha-home-climate-ml/issues",
-    "version": "0.2.2"
+    "version": "0.2.3"
 }

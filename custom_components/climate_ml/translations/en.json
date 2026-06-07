@@ -2,18 +2,18 @@
   "config": {
     "step": {
       "user": {
-        "title": "Home Climate ML",
-        "description": "Adds the Home Climate ML integration. No credentials required — reads zone temperatures and commands heat pump heads directly through Home Assistant. Configure the schedule file path in Options after setup."
+        "title": "ClimateML",
+        "description": "Adds the ClimateML integration. No credentials required — reads zone temperatures and commands heat pump heads directly through Home Assistant. Configure the schedule file path in Options after setup."
       }
     },
     "abort": {
-      "already_configured": "Home Climate ML is already configured"
+      "already_configured": "ClimateML is already configured"
     }
   },
   "options": {
     "step": {
       "init": {
-        "title": "Home Climate ML Options",
+        "title": "ClimateML Options",
         "description": "Per-zone schedules are loaded from a YAML file on the Home Assistant host.",
         "data": {
           "schedule_yaml_path": "Schedule YAML path"

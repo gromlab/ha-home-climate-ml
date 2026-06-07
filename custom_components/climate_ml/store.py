@@ -1,4 +1,4 @@
-"""SQLite data store for Home Climate ML."""
+"""SQLite data store for ClimateML."""
 from __future__ import annotations
 
 import os
