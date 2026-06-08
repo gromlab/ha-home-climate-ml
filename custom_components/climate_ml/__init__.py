@@ -26,7 +26,20 @@ async def async_setup_entry(
     entry: ClimateMLConfigEntry,
 ) -> bool:
     options = entry.options
-    zones = options.get("zones", [])
+
+    # Zones come from subentries; subentry unique_id is the stable zone slug.
+    zones = [
+        {
+            "id": s.unique_id or s.subentry_id,
+            "name": s.title,
+            "head_entity": s.data.get("head_entity", ""),
+            "sensor_entity": s.data.get("sensor_entity", ""),
+            "schedule": s.data.get("schedule", {"weekday": [], "weekend": []}),
+        }
+        for s in entry.subentries.values()
+        if s.subentry_type == "zone"
+    ]
+
     sense_only = {
         k: v for k, v in {
             "hallway": options.get("hallway_sensor", ""),
@@ -91,15 +104,40 @@ async def async_migrate_entry(
     hass: HomeAssistant,
     entry: ClimateMLConfigEntry,
 ) -> bool:
-    """Migrate entry from v1 (YAML schedule) to v2 (options-driven)."""
+    """Migrate entry versions."""
+    from types import MappingProxyType
+    from homeassistant.config_entries import ConfigSubentry
+
     LOGGER.info("Migrating ClimateML entry from version %s", entry.version)
 
     if entry.version == 1:
+        # v1 (YAML schedule) → v3 (subentry zones): carry over global options, drop path.
         new_options = copy.deepcopy(DEFAULT_OPTIONS)
         old = dict(entry.options)
         old.pop("schedule_yaml_path", None)
         new_options.update({k: v for k, v in old.items() if k in new_options})
-        hass.config_entries.async_update_entry(entry, options=new_options, version=2)
-        LOGGER.info("Migration to v2 complete")
+        hass.config_entries.async_update_entry(entry, options=new_options, version=3)
+        LOGGER.info("Migration to v3 complete (from v1)")
+
+    elif entry.version == 2:
+        # v2 (options-based zones) → v3 (subentry zones): lift zones out of options.
+        old_zones = entry.options.get("zones", [])
+        for zone in old_zones:
+            hass.config_entries.async_add_subentry(
+                entry,
+                ConfigSubentry(
+                    data=MappingProxyType({
+                        "head_entity": zone.get("head_entity", ""),
+                        "sensor_entity": zone.get("sensor_entity", ""),
+                        "schedule": zone.get("schedule", {"weekday": [], "weekend": []}),
+                    }),
+                    subentry_type="zone",
+                    title=zone["name"],
+                    unique_id=zone["id"],
+                ),
+            )
+        new_options = {k: v for k, v in entry.options.items() if k != "zones"}
+        hass.config_entries.async_update_entry(entry, options=new_options, version=3)
+        LOGGER.info("Migration to v3 complete (from v2, %d zones migrated)", len(old_zones))
 
     return True

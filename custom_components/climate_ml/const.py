@@ -21,13 +21,5 @@ DEFAULT_OPTIONS: dict = {
     "force_cool_clear_c": 28.0,
     "hallway_sensor": "",
     "outdoor_sensor": "",
-    "zones": [
-        {
-            "id": "zone_1",
-            "name": "Zone 1",
-            "head_entity": "",
-            "sensor_entity": "",
-            "schedule": {"weekday": [], "weekend": []},
-        },
-    ],
+    # Zones are subentries — not stored in options.
 }
