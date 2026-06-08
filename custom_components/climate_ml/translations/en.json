@@ -9,48 +9,49 @@
     "abort": {
       "already_configured": "ClimateML is already configured",
       "single_instance_allowed": "Only one ClimateML instance is allowed"
-    },
-    "subentries": {
-      "zone": {
-        "initiate_flow": {
-          "user": "Add zone"
-        },
-        "step": {
-          "user": {
-            "title": "Add Zone",
-            "data": {
-              "name": "Zone name",
-              "head_entity": "Heat pump head (climate entity)",
-              "sensor_entity": "Room temperature sensor",
-              "weekday_blocks": "Weekday schedule",
-              "weekend_blocks": "Weekend schedule"
-            },
-            "data_description": {
-              "name": "Display name — used to generate the stable zone ID",
-              "head_entity": "The climate entity controlling this zone's heat pump head",
-              "sensor_entity": "The sensor reporting actual room temperature",
-              "weekday_blocks": "Time blocks for Monday–Friday. Add as many as needed.",
-              "weekend_blocks": "Time blocks for Saturday–Sunday. Add as many as needed."
-            }
+    }
+  },
+  "config_subentries": {
+    "zone": {
+      "entry_type": "Zone",
+      "initiate_flow": {
+        "user": "Add zone"
+      },
+      "step": {
+        "user": {
+          "title": "Add Zone",
+          "data": {
+            "name": "Zone name",
+            "head_entity": "Heat pump head (climate entity)",
+            "sensor_entity": "Room temperature sensor",
+            "weekday_blocks": "Weekday schedule",
+            "weekend_blocks": "Weekend schedule"
           },
-          "reconfigure": {
-            "title": "Edit Zone",
-            "data": {
-              "name": "Zone name",
-              "head_entity": "Heat pump head (climate entity)",
-              "sensor_entity": "Room temperature sensor",
-              "weekday_blocks": "Weekday schedule",
-              "weekend_blocks": "Weekend schedule"
-            },
-            "data_description": {
-              "weekday_blocks": "Time blocks for Monday–Friday",
-              "weekend_blocks": "Time blocks for Saturday–Sunday"
-            }
+          "data_description": {
+            "name": "Display name — used to generate the stable zone ID",
+            "head_entity": "The climate entity controlling this zone's heat pump head",
+            "sensor_entity": "The sensor reporting actual room temperature",
+            "weekday_blocks": "Time blocks for Monday–Friday. Add as many as needed.",
+            "weekend_blocks": "Time blocks for Saturday–Sunday. Add as many as needed."
           }
         },
-        "abort": {
-          "reconfigure_successful": "Zone updated successfully"
+        "reconfigure": {
+          "title": "Edit Zone",
+          "data": {
+            "name": "Zone name",
+            "head_entity": "Heat pump head (climate entity)",
+            "sensor_entity": "Room temperature sensor",
+            "weekday_blocks": "Weekday schedule",
+            "weekend_blocks": "Weekend schedule"
+          },
+          "data_description": {
+            "weekday_blocks": "Time blocks for Monday–Friday",
+            "weekend_blocks": "Time blocks for Saturday–Sunday"
+          }
         }
+      },
+      "abort": {
+        "reconfigure_successful": "Zone updated successfully"
       }
     }
   },
@@ -85,13 +86,6 @@
     },
     "error": {
       "unknown": "Unexpected error"
-    }
-  },
-  "config_subentries": {
-    "zone": {
-      "abort": {
-        "name_required": "Zone name cannot be empty"
-      }
     }
   }
 }
