@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.4.0] — Zones as config subentries
+- Zones are now HA Config Subentries — add, edit, and delete zones directly from the integration page with native HA add/edit/delete affordances (no menu navigation required)
+- Schedule blocks (weekday and weekend) are edited inline per zone using the native ObjectSelector list UI — add multiple blocks in one form, no separate menu steps
+- Options flow simplified to global settings only
+- `async_migrate_entry` v2→v3: existing zones lifted automatically from `entry.options` into subentries — no remove/re-add needed
+- `async_migrate_entry` v1→v3: legacy YAML-schedule installs also handled
+- Version bump to 0.4.0 (entry version 3)
+
 ## [0.3.1] — Back navigation and block session editing
 - Back navigation added throughout the options flow:
   - Zone menu and schedule menu: "← Back" as a clickable menu item
