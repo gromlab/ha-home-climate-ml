@@ -151,7 +151,7 @@ def get_block(
     zone_id: str,
     now: datetime,
 ) -> tuple[str, float | None]:
-    """Return (mode, setpoint_c) for zone at given time. ('off', None) if not scheduled."""
+    """Return (mode, setpoint_c) for zone at given time. ('off', None) if unscheduled."""
     if zone_id not in schedules:
         return "off", None
 
@@ -167,5 +167,64 @@ def get_block(
         if block["start"] <= current_time < block["end"]:
             return block["mode"], block["setpoint_c"]
 
-    b = blocks[-1]
-    return b["mode"], b["setpoint_c"]
+    # Outside all defined blocks — intentionally off, not holding last block
+    return "off", None
+
+
+def get_current_block_detail(
+    schedules: dict[str, dict[str, list[ScheduleBlock]]],
+    zone_id: str,
+    now: datetime,
+) -> ScheduleBlock | None:
+    """Return the active ScheduleBlock for zone at now, or None if unscheduled."""
+    if zone_id not in schedules:
+        return None
+
+    day_type = "weekend" if now.weekday() >= 5 else "weekday"
+    zone = schedules[zone_id]
+    blocks = zone.get(day_type) or zone.get("weekday", [])
+
+    current_time = now.time().replace(second=0, microsecond=0)
+    for block in blocks:
+        if block["start"] <= current_time < block["end"]:
+            return block
+    return None
+
+
+def get_next_transition(
+    schedules: dict[str, dict[str, list[ScheduleBlock]]],
+    zone_id: str,
+    now: datetime,
+) -> datetime | None:
+    """Return the next schedule transition time after now, or None if no schedule."""
+    from datetime import timedelta
+    from homeassistant.util import dt as dt_util
+
+    if zone_id not in schedules:
+        return None
+
+    zone = schedules[zone_id]
+
+    def _transitions_for_day(day: datetime) -> list[datetime]:
+        """Collect all block boundary datetimes for a given day."""
+        day_type = "weekend" if day.weekday() >= 5 else "weekday"
+        blocks = zone.get(day_type) or zone.get("weekday", [])
+        result = []
+        for b in blocks:
+            for t in (b["start"], b["end"]):
+                result.append(day.replace(hour=t.hour, minute=t.minute, second=0, microsecond=0))
+        return result
+
+    for delta_days in range(2):
+        if delta_days == 0:
+            check_day = now
+        else:
+            # DST-safe: use start_of_local_day on tomorrow
+            tomorrow = now + timedelta(days=1)
+            check_day = dt_util.start_of_local_day(tomorrow)
+
+        for candidate in sorted(_transitions_for_day(check_day)):
+            if candidate > now:
+                return candidate
+
+    return None

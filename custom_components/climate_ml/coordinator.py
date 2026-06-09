@@ -11,7 +11,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN, EXTERNAL_SENSOR_MAX_C, EXTERNAL_SENSOR_MIN_C, LOGGER
-from .schedule import ScheduleBlock, get_block, parse_schedule_from_options
+from .schedule import ScheduleBlock, get_block, get_current_block_detail, get_next_transition, parse_schedule_from_options
 from .store import ClimateDataStore
 
 
@@ -75,12 +75,24 @@ class HomeClimateMlCoordinator(DataUpdateCoordinator[dict[str, ZoneData]]):
         return self._zones
 
     @property
+    def schedules(self) -> dict[str, dict[str, list[ScheduleBlock]]]:
+        return self._schedules
+
+    @property
     def zone_enabled(self) -> dict[str, bool]:
         return self._zone_enabled
 
     def get_decision_log(self, zone_id: str) -> list[dict]:
         """Return recent decisions for zone, newest first."""
         return list(reversed(list(self._decision_log.get(zone_id, []))))
+
+    def get_current_block(self, zone_id: str) -> ScheduleBlock | None:
+        now = dt_util.now()
+        return get_current_block_detail(self._schedules, zone_id, now)
+
+    def get_next_transition(self, zone_id: str) -> datetime | None:
+        now = dt_util.now()
+        return get_next_transition(self._schedules, zone_id, now)
 
     # ------------------------------------------------------------------ master / zone enable
 
@@ -164,12 +176,12 @@ class HomeClimateMlCoordinator(DataUpdateCoordinator[dict[str, ZoneData]]):
                 self._decision_log[zone_id].append({
                     "time": now.isoformat(timespec="seconds"),
                     "mode": zone_data["target_mode"],
-                    "setpoint_c": zone_data.get("target_setpoint_c"),
+                    "scheduled_c": zone_data.get("target_setpoint_c"),
                     "corrected_c": zone_data.get("corrected_setpoint_c"),
                     "source": zone_data["schedule_source"],
                     "ext_temp_c": zone_data.get("ext_temp_c"),
                     "offset_c": zone_data.get("offset_c"),
-                    "command": zone_data.get("last_command_c") is not None,
+                    "commanded": zone_data.get("last_command_c") is not None,
                 })
             except Exception as exc:  # noqa: BLE001
                 LOGGER.warning("Zone %s decision failed: %s", zone_id, exc)
