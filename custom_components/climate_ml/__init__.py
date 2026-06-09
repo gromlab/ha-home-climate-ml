@@ -6,6 +6,7 @@ from datetime import timedelta
 from typing import TYPE_CHECKING
 
 from homeassistant.const import Platform
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.event import async_track_time_change
 
 from .const import DEFAULT_OPTIONS, DOMAIN, LOGGER
@@ -28,17 +29,42 @@ async def async_setup_entry(
     options = entry.options
 
     # Zones come from subentries; subentry unique_id is the stable zone slug.
-    zones = [
-        {
-            "id": s.unique_id or s.subentry_id,
+    # Build a parallel zone_id → subentry_id map for device registry linkage.
+    zone_subentry_map: dict[str, str] = {}
+    zones = []
+    for s in entry.subentries.values():
+        if s.subentry_type != "zone":
+            continue
+        zone_id = s.unique_id or s.subentry_id
+        zones.append({
+            "id": zone_id,
             "name": s.title,
             "head_entity": s.data.get("head_entity", ""),
             "sensor_entity": s.data.get("sensor_entity", ""),
             "schedule": s.data.get("schedule", {"weekday": [], "weekend": []}),
-        }
-        for s in entry.subentries.values()
-        if s.subentry_type == "zone"
-    ]
+        })
+        zone_subentry_map[zone_id] = s.subentry_id
+
+    # Sync device registry: link each zone device to its subentry and remove
+    # devices whose subentry was deleted.
+    dreg = dr.async_get(hass)
+    current_zone_ids = {z["id"] for z in zones}
+
+    for device in dr.async_entries_for_config_entry(dreg, entry.entry_id):
+        for ident_domain, zone_id in device.identifiers:
+            if ident_domain == DOMAIN and zone_id not in current_zone_ids:
+                dreg.async_remove_device(device.id)
+                break
+
+    for zone in zones:
+        dreg.async_get_or_create(
+            config_entry_id=entry.entry_id,
+            config_subentry_id=zone_subentry_map.get(zone["id"]),
+            identifiers={(DOMAIN, zone["id"])},
+            name=f"ClimateML — {zone['name']}",
+            manufacturer="ClimateML",
+            model="Zone Controller",
+        )
 
     sense_only = {
         k: v for k, v in {
