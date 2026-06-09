@@ -51,6 +51,7 @@ async def async_setup_entry(
     for zone in coordinator.zones:
         for sensor_def in _SENSORS:
             entities.append(ClimateMLZoneSensor(coordinator, zone, sensor_def))
+        entities.append(ClimateMLZoneDecisionLog(coordinator, zone))
     async_add_entities(entities)
 
 
@@ -91,3 +92,40 @@ class ClimateMLZoneSensor(CoordinatorEntity[HomeClimateMlCoordinator], SensorEnt
     @property
     def available(self) -> bool:
         return self.coordinator.last_update_success
+
+
+class ClimateMLZoneDecisionLog(CoordinatorEntity[HomeClimateMlCoordinator], SensorEntity):
+    """Rolling log of the last 30 decisions for a zone, newest first."""
+
+    _attr_should_poll = False
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator: HomeClimateMlCoordinator, zone: dict) -> None:
+        super().__init__(coordinator)
+        self._zone_id = zone["id"]
+        self._attr_name = f"ML — {zone['name']} Decision Log"
+        self._attr_unique_id = f"{DOMAIN}_{self._zone_id}_decision_log"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, self._zone_id)},
+            name=f"ClimateML — {zone['name']}",
+            manufacturer="ClimateML",
+            model="Zone Controller",
+        )
+
+    @property
+    def native_value(self) -> str | None:
+        log = self.coordinator.get_decision_log(self._zone_id)
+        if not log:
+            return None
+        last = log[0]
+        mode = last.get("mode", "off")
+        source = last.get("source", "")
+        if mode == "off":
+            return f"off [{source}]"
+        sp = last.get("corrected_c") or last.get("setpoint_c")
+        sp_str = f"{sp:.1f}°C" if sp is not None else "?"
+        return f"{mode} @ {sp_str} [{source}]"
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        return {"decisions": self.coordinator.get_decision_log(self._zone_id)}

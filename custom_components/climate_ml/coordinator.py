@@ -1,6 +1,7 @@
 """Coordinator for ClimateML."""
 from __future__ import annotations
 
+from collections import deque
 from datetime import datetime, timedelta, timezone
 from typing import Any, TypedDict
 
@@ -63,6 +64,7 @@ class HomeClimateMlCoordinator(DataUpdateCoordinator[dict[str, ZoneData]]):
         self._last_hard_alert: dict[str, datetime] = {}
         self._last_sensor_values: dict[str, Any] = {}
         self._zone_enabled: dict[str, bool] = {z["id"]: True for z in zones}
+        self._decision_log: dict[str, deque] = {z["id"]: deque(maxlen=30) for z in zones}
 
         # Master enable: survives coordinator reload via hass.data; resets to OFF on HA restart
         hass.data.setdefault(DOMAIN, {})
@@ -75,6 +77,10 @@ class HomeClimateMlCoordinator(DataUpdateCoordinator[dict[str, ZoneData]]):
     @property
     def zone_enabled(self) -> dict[str, bool]:
         return self._zone_enabled
+
+    def get_decision_log(self, zone_id: str) -> list[dict]:
+        """Return recent decisions for zone, newest first."""
+        return list(reversed(list(self._decision_log.get(zone_id, []))))
 
     # ------------------------------------------------------------------ master / zone enable
 
@@ -155,6 +161,16 @@ class HomeClimateMlCoordinator(DataUpdateCoordinator[dict[str, ZoneData]]):
                 zone_data = await self._process_zone(zone_id, zone, now)
                 results[zone_id] = zone_data
                 all_failed = False
+                self._decision_log[zone_id].append({
+                    "time": now.isoformat(timespec="seconds"),
+                    "mode": zone_data["target_mode"],
+                    "setpoint_c": zone_data.get("target_setpoint_c"),
+                    "corrected_c": zone_data.get("corrected_setpoint_c"),
+                    "source": zone_data["schedule_source"],
+                    "ext_temp_c": zone_data.get("ext_temp_c"),
+                    "offset_c": zone_data.get("offset_c"),
+                    "command": zone_data.get("last_command_c") is not None,
+                })
             except Exception as exc:  # noqa: BLE001
                 LOGGER.warning("Zone %s decision failed: %s", zone_id, exc)
                 results[zone_id] = ZoneData(
