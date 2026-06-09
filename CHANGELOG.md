@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.4.3] — Hotfix: remove invalid device registry call
+- Remove `async_update_device(remove_config_subentry_id=None)` call that caused integration setup failure — HA rejects this without a paired config_entry_id; cosmetic duplicate-device issue deferred
+- Version bump to 0.4.3
+
 ## [0.4.2] — Decision log sensor + duplicate device fix
 - New diagnostic sensor per zone: `ML — {Zone} Decision Log` — state shows the last decision ("cool @ 21.5°C [schedule]", "off [schedule]", etc.), attributes contain the last 30 decisions as a list (newest first) with time, mode, setpoint, corrected setpoint, source, ext temp, offset, and whether a command was sent
 - Fixed duplicate device on integration page: stripped the bare (no-subentry) device association that entity platforms add automatically, so each zone device now appears only under its subentry
