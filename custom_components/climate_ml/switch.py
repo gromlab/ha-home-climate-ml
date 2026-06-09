@@ -63,9 +63,9 @@ class ClimateMLZoneSwitch(
 
 
 class ClimateMLMasterSwitch(
-    CoordinatorEntity[HomeClimateMlCoordinator], SwitchEntity
+    CoordinatorEntity[HomeClimateMlCoordinator], SwitchEntity, RestoreEntity
 ):
-    """Master enable switch. In-memory only — resets to OFF on HA restart.
+    """Master enable switch. Persists across restarts via RestoreEntity.
     Survives options reload via hass.data. Acts as AND gate with zone switches."""
 
     _attr_should_poll = False
@@ -80,6 +80,13 @@ class ClimateMLMasterSwitch(
             manufacturer="ClimateML",
             model="System Controller",
         )
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        if (last_state := await self.async_get_last_state()) is not None:
+            enabled = last_state.state == "on"
+            self.coordinator.set_master_enabled(enabled)
+            self.async_write_ha_state()
 
     @property
     def is_on(self) -> bool:

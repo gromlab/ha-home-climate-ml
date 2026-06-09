@@ -149,10 +149,14 @@ class ClimateMLConfigFlow(ConfigFlow, domain=DOMAIN):
     def async_get_supported_subentry_types(
         cls, config_entry: ConfigEntry
     ) -> dict[str, type[ConfigSubentryFlow]]:
-        return {
-            "zone": ZoneSubentryFlowHandler,
-            "controller": ControllerSubentryFlowHandler,
-        }
+        types: dict[str, type[ConfigSubentryFlow]] = {"zone": ZoneSubentryFlowHandler}
+        # Only show "Add ClimateML Controller" if none exists yet
+        has_controller = any(
+            s.subentry_type == "controller" for s in config_entry.subentries.values()
+        )
+        if not has_controller:
+            types["controller"] = ControllerSubentryFlowHandler
+        return types
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None

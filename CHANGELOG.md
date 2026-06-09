@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.4.7] — Controller UX fixes
+- **Duplicate devices fixed**: after platform setup, bare (no-subentry) device registry associations added by entity registration are removed — devices no longer appear in both "Devices that don't belong to a sub-entry" AND their subentry
+- **"Add ClimateML Controller" hides after first controller created**: `async_get_supported_subentry_types` now conditionally excludes the controller type when a controller subentry already exists
+- **Master switch persists across HA restarts**: `ClimateMLMasterSwitch` now uses `RestoreEntity` — same pattern as zone switches — so the enabled/disabled state survives restarts instead of resetting to OFF
+- Version bump to 0.4.7
+
 ## [0.4.6] — ClimateML Controller subentry
 - New subentry type **ClimateML Controller**: system-level entity pickers for ODU mode, outdoor temp, extra indoor temps (multi-select for sensor guard), power, energy, and weather. Auto-created by v3→v4 migration; configure via integration page → ClimateML Controller → Configure
 - **Master switch anchored to Controller device**: `ML — All Zones Enabled` now appears under ClimateML Controller in the device list instead of floating
