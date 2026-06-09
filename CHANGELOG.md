@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.4.2] — Decision log sensor + duplicate device fix
+- New diagnostic sensor per zone: `ML — {Zone} Decision Log` — state shows the last decision ("cool @ 21.5°C [schedule]", "off [schedule]", etc.), attributes contain the last 30 decisions as a list (newest first) with time, mode, setpoint, corrected setpoint, source, ext temp, offset, and whether a command was sent
+- Fixed duplicate device on integration page: stripped the bare (no-subentry) device association that entity platforms add automatically, so each zone device now appears only under its subentry
+- Version bump to 0.4.2
+
 ## [0.4.1] — Device registry: subentry linkage + orphan cleanup
 - Zone devices now appear under their subentry on the integration page (previously grouped under "Devices that don't belong to a sub-entry")
 - Deleting a zone subentry now also removes its device and entities from the registry on next reload — no stale cards left behind

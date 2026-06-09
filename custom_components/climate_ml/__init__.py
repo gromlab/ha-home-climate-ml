@@ -100,6 +100,15 @@ async def async_setup_entry(
     await coordinator.restore_overrides()
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+
+    # Entity platforms add a bare (no-subentry) association to zone devices.
+    # Remove that so each device appears only under its own subentry, not also
+    # under "Devices that don't belong to a sub-entry".
+    for zone in zones:
+        device = dreg.async_get_device(identifiers={(DOMAIN, zone["id"])})
+        if device:
+            dreg.async_update_device(device.id, remove_config_subentry_id=None)
+
     entry.async_on_unload(entry.add_update_listener(async_reload_entry))
 
     async def _prune(_now):
