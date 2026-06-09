@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.4.1] — Device registry: subentry linkage + orphan cleanup
+- Zone devices now appear under their subentry on the integration page (previously grouped under "Devices that don't belong to a sub-entry")
+- Deleting a zone subentry now also removes its device and entities from the registry on next reload — no stale cards left behind
+- Version bump to 0.4.1
+
 ## [0.4.0] — Zones as config subentries
 - Zones are now HA Config Subentries — add, edit, and delete zones directly from the integration page with native HA add/edit/delete affordances (no menu navigation required)
 - Schedule blocks (weekday and weekend) are edited inline per zone using the native ObjectSelector list UI — add multiple blocks in one form, no separate menu steps
