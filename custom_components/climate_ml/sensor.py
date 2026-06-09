@@ -91,7 +91,13 @@ class ClimateMLZoneSensor(CoordinatorEntity[HomeClimateMlCoordinator], SensorEnt
 
     @property
     def available(self) -> bool:
-        return self.coordinator.last_update_success
+        if not self.coordinator.last_update_success:
+            return False
+        if self.coordinator.data:
+            zone_data = self.coordinator.data.get(self._zone_id)
+            if zone_data and not zone_data.get("enabled", True):
+                return False
+        return True
 
 
 class ClimateMLZoneDecisionLog(CoordinatorEntity[HomeClimateMlCoordinator], SensorEntity):
