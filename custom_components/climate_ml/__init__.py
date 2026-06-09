@@ -1,4 +1,4 @@
-"""ClimateML — per-zone heat pump offset correction and scheduling."""
+"""ClimateML — per-zone climate offset correction and scheduling."""
 from __future__ import annotations
 
 import copy
@@ -9,7 +9,10 @@ from homeassistant.const import Platform
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.event import async_track_time_change
 
-from .const import DEFAULT_OPTIONS, DOMAIN, LOGGER, _REMOVED_OPTIONS
+from .const import (
+    CONTROLLER_DEFAULTS, DEFAULT_OPTIONS, DOMAIN, LOGGER,
+    _REMOVED_OPTIONS, _V5_REMOVED_OPTIONS,
+)
 from .coordinator import HomeClimateMlCoordinator
 from .store import ClimateDataStore
 
@@ -28,9 +31,7 @@ async def async_setup_entry(
     hass: HomeAssistant,
     entry: ClimateMLConfigEntry,
 ) -> bool:
-    options = entry.options
-
-    # Zones come from zone subentries; build zone list and zone_id → subentry_id map.
+    # Zones come from zone subentries; controller config from controller subentry.
     zone_subentry_map: dict[str, str] = {}
     zones = []
     controller_subentry_id: str | None = None
@@ -46,6 +47,7 @@ async def async_setup_entry(
                 "sensor_entity": s.data.get("sensor_entity", ""),
                 "eva_in_entity": s.data.get("eva_in_entity", ""),
                 "eva_out_entity": s.data.get("eva_out_entity", ""),
+                "occupancy_entity": s.data.get("occupancy_entity", ""),
                 "schedule": s.data.get("schedule", {"weekday": [], "weekend": []}),
             })
             zone_subentry_map[zone_id] = s.subentry_id
@@ -53,7 +55,7 @@ async def async_setup_entry(
             controller_subentry_id = s.subentry_id
             controller_config = dict(s.data)
 
-    # Sync device registry: remove orphaned zone devices, create/update zone + controller devices.
+    # Sync device registry
     dreg = dr.async_get(hass)
     current_zone_ids = {z["id"] for z in zones}
     protected_identifiers = {_CONTROLLER_IDENTIFIER}
@@ -68,7 +70,7 @@ async def async_setup_entry(
                 dreg.async_remove_device(device.id)
                 break
 
-    # Controller device — create before async_forward_entry_setups so NUMBER entities can reference it.
+    # Controller device — created before async_forward_entry_setups so NUMBER entities can reference it
     if controller_subentry_id is not None:
         dreg.async_get_or_create(
             config_entry_id=entry.entry_id,
@@ -89,16 +91,12 @@ async def async_setup_entry(
             model="Zone Controller",
         )
 
-    sense_only = {
-        k: v for k, v in {
-            "hallway": options.get("hallway_sensor", ""),
-            "outdoor": options.get("outdoor_sensor", ""),
-        }.items() if v
-    }
+    # Build coordinator params:
+    # - update_interval, setpoint bounds: from controller_config (with fallback to CONTROLLER_DEFAULTS)
+    # - tuning values: from DEFAULT_OPTIONS (overridden in-place by NUMBER RestoreEntity after setup)
     params = {
-        k: options.get(k, DEFAULT_OPTIONS[k])
-        for k in DEFAULT_OPTIONS
-        if k not in ("hallway_sensor", "outdoor_sensor")
+        **{k: controller_config.get(k, v) for k, v in CONTROLLER_DEFAULTS.items()},
+        **DEFAULT_OPTIONS,
     }
 
     db_path = hass.config.path("climate_ml", "decisions.db")
@@ -109,7 +107,6 @@ async def async_setup_entry(
         entry_id=entry.entry_id,
         store=store,
         zones=zones,
-        sense_only=sense_only,
         update_interval=timedelta(minutes=params["update_interval_minutes"]),
         params=params,
         controller_config=controller_config,
@@ -124,10 +121,8 @@ async def async_setup_entry(
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     entry.async_on_unload(entry.add_update_listener(async_reload_entry))
 
-    # Entity platform registration adds a bare (no-subentry) config_entry association to
-    # every device, causing each device to appear in BOTH its subentry AND
-    # "Devices that don't belong to a sub-entry". Remove the bare association on any device
-    # that already has a real subentry linkage.
+    # Remove bare (no-subentry) device associations that entity platform registration adds.
+    # Without this, every device appears in both its subentry and "Devices that don't belong to a sub-entry".
     dreg_post = dr.async_get(hass)
     for device in dr.async_entries_for_config_entry(dreg_post, entry.entry_id):
         subentries = device.config_entries_subentries.get(entry.entry_id, set())
@@ -173,8 +168,7 @@ async def async_migrate_entry(
     LOGGER.info("Migrating ClimateML entry from version %s", entry.version)
 
     if entry.version == 1:
-        # v1 (YAML schedule) → v3 (subentry zones): carry over global options, drop path.
-        new_options = copy.deepcopy(DEFAULT_OPTIONS)
+        new_options = copy.deepcopy({**CONTROLLER_DEFAULTS, **DEFAULT_OPTIONS})
         old = dict(entry.options)
         old.pop("schedule_yaml_path", None)
         new_options.update({k: v for k, v in old.items() if k in new_options})
@@ -182,7 +176,6 @@ async def async_migrate_entry(
         LOGGER.info("Migration to v3 complete (from v1)")
 
     elif entry.version == 2:
-        # v2 (options-based zones) → v3 (subentry zones): lift zones out of options.
         old_zones = entry.options.get("zones", [])
         for zone in old_zones:
             hass.config_entries.async_add_subentry(
@@ -203,7 +196,6 @@ async def async_migrate_entry(
         LOGGER.info("Migration to v3 complete (from v2, %d zones migrated)", len(old_zones))
 
     if entry.version == 3:
-        # v3 → v4: create controller subentry, strip removed option keys, add new defaults.
         has_controller = any(
             s.subentry_type == "controller" for s in entry.subentries.values()
         )
@@ -224,5 +216,13 @@ async def async_migrate_entry(
             new_options["sensor_guard_threshold_c"] = DEFAULT_OPTIONS["sensor_guard_threshold_c"]
         hass.config_entries.async_update_entry(entry, options=new_options, version=4)
         LOGGER.info("Migration to v4 complete")
+
+    if entry.version == 4:
+        # v4→v5: strip options now managed by controller subentry or NUMBER entities.
+        # The values remain accessible via CONTROLLER_DEFAULTS fallback in async_setup_entry
+        # until the user reconfigures the controller subentry explicitly.
+        new_options = {k: v for k, v in entry.options.items() if k not in _V5_REMOVED_OPTIONS}
+        hass.config_entries.async_update_entry(entry, options=new_options, version=5)
+        LOGGER.info("Migration to v5 complete (options consolidated to controller subentry)")
 
     return True
