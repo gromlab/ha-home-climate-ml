@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.4.4] — Sensor availability when zone disabled
+- Numeric zone sensors (room temp, offset, corrected setpoint) now report `available = False` when the zone is disabled — shows as grey "Unavailable" instead of amber "Unknown", which is the correct HA semantic for intentionally-off data
+- Decision log sensor remains available even when zone is disabled (it records the disabled state)
+- Version bump to 0.4.4
+
 ## [0.4.3] — Hotfix: remove invalid device registry call
 - Remove `async_update_device(remove_config_subentry_id=None)` call that caused integration setup failure — HA rejects this without a paired config_entry_id; cosmetic duplicate-device issue deferred
 - Version bump to 0.4.3
