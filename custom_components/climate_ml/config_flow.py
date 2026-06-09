@@ -110,8 +110,30 @@ def _zone_schema(
             EntitySelector(EntitySelectorConfig(domain="climate")),
         vol.Required("sensor_entity", default=d.get("sensor_entity", "")):
             EntitySelector(EntitySelectorConfig(domain="sensor")),
+        vol.Optional("eva_in_entity", default=d.get("eva_in_entity", "")):
+            EntitySelector(EntitySelectorConfig(domain="sensor")),
+        vol.Optional("eva_out_entity", default=d.get("eva_out_entity", "")):
+            EntitySelector(EntitySelectorConfig(domain="sensor")),
         vol.Optional("weekday_blocks", default=d.get("weekday_blocks", [])): block_sel,
         vol.Optional("weekend_blocks", default=d.get("weekend_blocks", [])): block_sel,
+    })
+
+
+def _controller_schema(defaults: dict | None = None) -> vol.Schema:
+    d = defaults or {}
+    return vol.Schema({
+        vol.Optional("odu_mode_entity", default=d.get("odu_mode_entity", "")):
+            EntitySelector(EntitySelectorConfig(domain="sensor")),
+        vol.Optional("outdoor_temp_entity", default=d.get("outdoor_temp_entity", "")):
+            EntitySelector(EntitySelectorConfig(domain="sensor")),
+        vol.Optional("extra_temp_entities", default=d.get("extra_temp_entities") or []):
+            EntitySelector(EntitySelectorConfig(domain="sensor", multiple=True)),
+        vol.Optional("power_entity", default=d.get("power_entity", "")):
+            EntitySelector(EntitySelectorConfig(domain="sensor")),
+        vol.Optional("energy_entity", default=d.get("energy_entity", "")):
+            EntitySelector(EntitySelectorConfig(domain="sensor")),
+        vol.Optional("weather_entity", default=d.get("weather_entity", "")):
+            EntitySelector(EntitySelectorConfig(domain="weather")),
     })
 
 
@@ -120,14 +142,17 @@ def _zone_schema(
 # ---------------------------------------------------------------------------
 
 class ClimateMLConfigFlow(ConfigFlow, domain=DOMAIN):
-    VERSION = 3
+    VERSION = 4
 
     @classmethod
     @callback
     def async_get_supported_subentry_types(
         cls, config_entry: ConfigEntry
     ) -> dict[str, type[ConfigSubentryFlow]]:
-        return {"zone": ZoneSubentryFlowHandler}
+        return {
+            "zone": ZoneSubentryFlowHandler,
+            "controller": ControllerSubentryFlowHandler,
+        }
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -153,7 +178,7 @@ class ClimateMLConfigFlow(ConfigFlow, domain=DOMAIN):
 # ---------------------------------------------------------------------------
 
 class ZoneSubentryFlowHandler(ConfigSubentryFlow):
-    """Each zone is a subentry: name, entities, weekday/weekend schedule blocks."""
+    """Each zone is a subentry: name, entities, EVA sensors, weekday/weekend schedule blocks."""
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -177,6 +202,8 @@ class ZoneSubentryFlowHandler(ConfigSubentryFlow):
                     data={
                         "head_entity": user_input.get("head_entity", ""),
                         "sensor_entity": user_input.get("sensor_entity", ""),
+                        "eva_in_entity": user_input.get("eva_in_entity", ""),
+                        "eva_out_entity": user_input.get("eva_out_entity", ""),
                         "schedule": {
                             "weekday": _normalise_blocks(user_input.get("weekday_blocks") or []),
                             "weekend": _normalise_blocks(user_input.get("weekend_blocks") or []),
@@ -211,6 +238,8 @@ class ZoneSubentryFlowHandler(ConfigSubentryFlow):
                     data={
                         "head_entity": user_input.get("head_entity", ""),
                         "sensor_entity": user_input.get("sensor_entity", ""),
+                        "eva_in_entity": user_input.get("eva_in_entity", ""),
+                        "eva_out_entity": user_input.get("eva_out_entity", ""),
                         "schedule": {
                             "weekday": _normalise_blocks(user_input.get("weekday_blocks") or []),
                             "weekend": _normalise_blocks(user_input.get("weekend_blocks") or []),
@@ -225,6 +254,8 @@ class ZoneSubentryFlowHandler(ConfigSubentryFlow):
             "name": subentry.title,
             "head_entity": subentry.data.get("head_entity", ""),
             "sensor_entity": subentry.data.get("sensor_entity", ""),
+            "eva_in_entity": subentry.data.get("eva_in_entity", ""),
+            "eva_out_entity": subentry.data.get("eva_out_entity", ""),
             "weekday_blocks": list(subentry.data.get("schedule", {}).get("weekday", [])),
             "weekend_blocks": list(subentry.data.get("schedule", {}).get("weekend", [])),
         }
@@ -236,7 +267,63 @@ class ZoneSubentryFlowHandler(ConfigSubentryFlow):
 
 
 # ---------------------------------------------------------------------------
-# Options flow — global settings only (zones managed via subentries)
+# Controller subentry flow — reconfigure only (auto-created by migration)
+# ---------------------------------------------------------------------------
+
+class ControllerSubentryFlowHandler(ConfigSubentryFlow):
+    """Controller subentry: system-level entity pickers for ODU, weather, power, extras."""
+
+    async def async_step_user(
+        self, user_input: dict[str, Any] | None = None
+    ) -> SubentryFlowResult:
+        """Fresh-install path: user creates controller manually via 'Add ClimateML Controller'."""
+        if user_input is not None:
+            return self.async_create_entry(
+                title="ClimateML Controller",
+                unique_id="controller",
+                data={
+                    "odu_mode_entity": user_input.get("odu_mode_entity", ""),
+                    "outdoor_temp_entity": user_input.get("outdoor_temp_entity", ""),
+                    "extra_temp_entities": user_input.get("extra_temp_entities") or [],
+                    "power_entity": user_input.get("power_entity", ""),
+                    "energy_entity": user_input.get("energy_entity", ""),
+                    "weather_entity": user_input.get("weather_entity", ""),
+                },
+            )
+        return self.async_show_form(
+            step_id="user",
+            data_schema=_controller_schema(),
+        )
+
+    async def async_step_reconfigure(
+        self, user_input: dict[str, Any] | None = None
+    ) -> SubentryFlowResult:
+        subentry = self._get_reconfigure_subentry()
+
+        if user_input is not None:
+            return self.async_update_and_abort(
+                self._get_entry(),
+                subentry,
+                title="ClimateML Controller",
+                data={
+                    "odu_mode_entity": user_input.get("odu_mode_entity", ""),
+                    "outdoor_temp_entity": user_input.get("outdoor_temp_entity", ""),
+                    "extra_temp_entities": user_input.get("extra_temp_entities") or [],
+                    "power_entity": user_input.get("power_entity", ""),
+                    "energy_entity": user_input.get("energy_entity", ""),
+                    "weather_entity": user_input.get("weather_entity", ""),
+                },
+            )
+
+        defaults = dict(subentry.data)
+        return self.async_show_form(
+            step_id="reconfigure",
+            data_schema=_controller_schema(defaults),
+        )
+
+
+# ---------------------------------------------------------------------------
+# Options flow — global settings only (zones/controller managed via subentries)
 # ---------------------------------------------------------------------------
 
 class ClimateMLOptionsFlow(OptionsFlow):
@@ -255,22 +342,10 @@ class ClimateMLOptionsFlow(OptionsFlow):
         schema = vol.Schema({
             vol.Optional("update_interval_minutes", default=opts.get("update_interval_minutes", 5)):
                 NumberSelector(NumberSelectorConfig(min=1, max=60, step=1, mode=NumberSelectorMode.BOX)),
-            vol.Optional("override_duration_minutes", default=opts.get("override_duration_minutes", 120)):
-                NumberSelector(NumberSelectorConfig(min=15, max=480, step=15, mode=NumberSelectorMode.BOX)),
-            vol.Optional("setpoint_tolerance_c", default=opts.get("setpoint_tolerance_c", 0.5)):
-                NumberSelector(NumberSelectorConfig(min=0.1, max=2.0, step=0.1, mode=NumberSelectorMode.BOX)),
-            vol.Optional("offset_clamp_c", default=opts.get("offset_clamp_c", 5.0)):
-                NumberSelector(NumberSelectorConfig(min=1.0, max=10.0, step=0.5, mode=NumberSelectorMode.BOX)),
             vol.Optional("setpoint_min_c", default=sp_min):
                 NumberSelector(NumberSelectorConfig(min=10.0, max=20.0, step=0.5, mode=NumberSelectorMode.BOX)),
             vol.Optional("setpoint_max_c", default=sp_max):
                 NumberSelector(NumberSelectorConfig(min=22.0, max=32.0, step=0.5, mode=NumberSelectorMode.BOX)),
-            vol.Optional("default_setpoint_c", default=opts.get("default_setpoint_c", 21.0)):
-                NumberSelector(NumberSelectorConfig(min=sp_min, max=sp_max, step=0.5, mode=NumberSelectorMode.BOX)),
-            vol.Optional("force_cool_threshold_c", default=opts.get("force_cool_threshold_c", 30.0)):
-                NumberSelector(NumberSelectorConfig(min=25.0, max=40.0, step=0.5, mode=NumberSelectorMode.BOX)),
-            vol.Optional("force_cool_clear_c", default=opts.get("force_cool_clear_c", 28.0)):
-                NumberSelector(NumberSelectorConfig(min=20.0, max=38.0, step=0.5, mode=NumberSelectorMode.BOX)),
             vol.Optional("hallway_sensor", default=opts.get("hallway_sensor", "")):
                 EntitySelector(EntitySelectorConfig(domain="sensor", multiple=False)),
             vol.Optional("outdoor_sensor", default=opts.get("outdoor_sensor", "")):

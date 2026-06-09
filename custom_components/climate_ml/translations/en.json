@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "ClimateML",
-        "description": "Add the ClimateML integration. Configure global settings in Options and add zones via the integration page after setup."
+        "description": "Add the ClimateML integration. Configure global settings in Options; add zones and configure the controller via the integration page after setup."
       }
     },
     "abort": {
@@ -24,6 +24,8 @@
             "name": "Zone name",
             "head_entity": "Heat pump head (climate entity)",
             "sensor_entity": "Room temperature sensor",
+            "eva_in_entity": "EVA in temperature sensor (optional)",
+            "eva_out_entity": "EVA out temperature sensor (optional)",
             "weekday_blocks": "Weekday schedule",
             "weekend_blocks": "Weekend schedule"
           },
@@ -31,6 +33,8 @@
             "name": "Display name — used to generate the stable zone ID",
             "head_entity": "The climate entity controlling this zone's heat pump head",
             "sensor_entity": "The sensor reporting actual room temperature",
+            "eva_in_entity": "Refrigerant inlet temperature from ESPHome samsung-hvac — logged for future ML",
+            "eva_out_entity": "Refrigerant outlet temperature from ESPHome samsung-hvac — logged for future ML",
             "weekday_blocks": "Time blocks for Monday–Friday. Add as many as needed.",
             "weekend_blocks": "Time blocks for Saturday–Sunday. Add as many as needed."
           }
@@ -41,10 +45,14 @@
             "name": "Zone name",
             "head_entity": "Heat pump head (climate entity)",
             "sensor_entity": "Room temperature sensor",
+            "eva_in_entity": "EVA in temperature sensor (optional)",
+            "eva_out_entity": "EVA out temperature sensor (optional)",
             "weekday_blocks": "Weekday schedule",
             "weekend_blocks": "Weekend schedule"
           },
           "data_description": {
+            "eva_in_entity": "Refrigerant inlet temperature from ESPHome samsung-hvac",
+            "eva_out_entity": "Refrigerant outlet temperature from ESPHome samsung-hvac",
             "weekday_blocks": "Time blocks for Monday–Friday",
             "weekend_blocks": "Time blocks for Saturday–Sunday"
           }
@@ -52,6 +60,47 @@
       },
       "abort": {
         "reconfigure_successful": "Zone updated successfully"
+      }
+    },
+    "controller": {
+      "entry_type": "Controller",
+      "initiate_flow": {
+        "user": "Add ClimateML Controller"
+      },
+      "step": {
+        "user": {
+          "title": "ClimateML Controller",
+          "data": {
+            "odu_mode_entity": "Heat pump ODU mode sensor (optional)",
+            "outdoor_temp_entity": "Outdoor temperature sensor (optional)",
+            "extra_temp_entities": "Additional indoor temperature sensors (optional)",
+            "power_entity": "Heat pump power sensor (optional)",
+            "energy_entity": "Heat pump energy sensor (optional)",
+            "weather_entity": "Weather entity for forecast (optional)"
+          },
+          "data_description": {
+            "odu_mode_entity": "Compressor/ODU operating mode — ground truth for heat pump state (e.g. sensor.samsung_hvac_odu_mode)",
+            "outdoor_temp_entity": "Outdoor temperature — used as additional peer reading for sensor guard",
+            "extra_temp_entities": "Non-zone indoor sensors (e.g. hallway) used as peer readings in the sensor guard anomaly check",
+            "power_entity": "Real-time power draw — logged for future COP calculations",
+            "energy_entity": "Cumulative energy — logged for future efficiency trending",
+            "weather_entity": "Used to fetch hourly forecast for solar gain anticipation (future ML feature)"
+          }
+        },
+        "reconfigure": {
+          "title": "Edit ClimateML Controller",
+          "data": {
+            "odu_mode_entity": "Heat pump ODU mode sensor (optional)",
+            "outdoor_temp_entity": "Outdoor temperature sensor (optional)",
+            "extra_temp_entities": "Additional indoor temperature sensors (optional)",
+            "power_entity": "Heat pump power sensor (optional)",
+            "energy_entity": "Heat pump energy sensor (optional)",
+            "weather_entity": "Weather entity for forecast (optional)"
+          }
+        }
+      },
+      "abort": {
+        "reconfigure_successful": "Controller updated successfully"
       }
     }
   },
@@ -61,26 +110,17 @@
         "title": "Global Settings",
         "data": {
           "update_interval_minutes": "Update interval (minutes)",
-          "override_duration_minutes": "Override duration (minutes)",
-          "setpoint_tolerance_c": "Setpoint tolerance (°C)",
-          "offset_clamp_c": "Max offset clamp (°C)",
           "setpoint_min_c": "Minimum setpoint (°C)",
           "setpoint_max_c": "Maximum setpoint (°C)",
-          "default_setpoint_c": "Default setpoint (°C)",
-          "force_cool_threshold_c": "Force-cool trigger temperature (°C)",
-          "force_cool_clear_c": "Force-cool clear temperature (°C)",
           "hallway_sensor": "Hallway temperature sensor (optional)",
           "outdoor_sensor": "Outdoor temperature sensor (optional)"
         },
         "data_description": {
           "update_interval_minutes": "How often the decision loop runs",
-          "override_duration_minutes": "How long a manual temperature override lasts",
-          "setpoint_tolerance_c": "Minimum change before commanding the heat pump",
-          "offset_clamp_c": "Maximum offset the ML model can apply",
-          "force_cool_threshold_c": "Override all zones to cool above this outdoor temperature",
-          "force_cool_clear_c": "Release force-cool once outdoor temperature drops below this",
+          "setpoint_min_c": "Minimum allowed corrected setpoint",
+          "setpoint_max_c": "Maximum allowed corrected setpoint",
           "hallway_sensor": "Used as a whole-house reference temperature",
-          "outdoor_sensor": "Used for force-cool threshold logic"
+          "outdoor_sensor": "Legacy outdoor sensor — prefer ODU outdoor entity in Controller"
         }
       }
     },

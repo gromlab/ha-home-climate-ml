@@ -74,6 +74,12 @@ class ClimateMLMasterSwitch(
     def __init__(self, coordinator: HomeClimateMlCoordinator) -> None:
         super().__init__(coordinator)
         self._attr_unique_id = f"{DOMAIN}_master_enabled"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, "controller")},
+            name="ClimateML Controller",
+            manufacturer="ClimateML",
+            model="System Controller",
+        )
 
     @property
     def is_on(self) -> bool:
