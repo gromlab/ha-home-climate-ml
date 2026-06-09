@@ -1,6 +1,8 @@
 """Sensor platform for ClimateML — per-zone diagnostic sensors."""
 from __future__ import annotations
 
+from datetime import datetime
+
 from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorEntity,
@@ -52,7 +54,18 @@ async def async_setup_entry(
         for sensor_def in _SENSORS:
             entities.append(ClimateMLZoneSensor(coordinator, zone, sensor_def))
         entities.append(ClimateMLZoneDecisionLog(coordinator, zone))
+        entities.append(ClimateMLZoneCurrentBlock(coordinator, zone))
+        entities.append(ClimateMLZoneNextTransition(coordinator, zone))
     async_add_entities(entities)
+
+
+def _device_info(zone: dict) -> DeviceInfo:
+    return DeviceInfo(
+        identifiers={(DOMAIN, zone["id"])},
+        name=f"ClimateML — {zone['name']}",
+        manufacturer="ClimateML",
+        model="Zone Controller",
+    )
 
 
 class ClimateMLZoneSensor(CoordinatorEntity[HomeClimateMlCoordinator], SensorEntity):
@@ -74,12 +87,7 @@ class ClimateMLZoneSensor(CoordinatorEntity[HomeClimateMlCoordinator], SensorEnt
         self._attr_state_class = sensor_def["state_class"]
         if sensor_def["entity_category"]:
             self._attr_entity_category = sensor_def["entity_category"]
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, self._zone_id)},
-            name=f"ClimateML — {zone['name']}",
-            manufacturer="ClimateML",
-            model="Zone Controller",
-        )
+        self._attr_device_info = _device_info(zone)
 
     @property
     def native_value(self) -> float | None:
@@ -111,12 +119,7 @@ class ClimateMLZoneDecisionLog(CoordinatorEntity[HomeClimateMlCoordinator], Sens
         self._zone_id = zone["id"]
         self._attr_name = f"ML — {zone['name']} Decision Log"
         self._attr_unique_id = f"{DOMAIN}_{self._zone_id}_decision_log"
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, self._zone_id)},
-            name=f"ClimateML — {zone['name']}",
-            manufacturer="ClimateML",
-            model="Zone Controller",
-        )
+        self._attr_device_info = _device_info(zone)
 
     @property
     def native_value(self) -> str | None:
@@ -126,12 +129,87 @@ class ClimateMLZoneDecisionLog(CoordinatorEntity[HomeClimateMlCoordinator], Sens
         last = log[0]
         mode = last.get("mode", "off")
         source = last.get("source", "")
+        commanded = last.get("commanded", False)
+
         if mode == "off":
             return f"off [{source}]"
-        sp = last.get("corrected_c") or last.get("setpoint_c")
+
+        scheduled_c = last.get("scheduled_c")
+        corrected_c = last.get("corrected_c")
+        offset_c = last.get("offset_c")
+
+        suffix = " ✓" if commanded else " held"
+
+        if offset_c is not None and abs(offset_c) >= 0.05 and corrected_c is not None and scheduled_c is not None:
+            sign = "+" if offset_c >= 0 else ""
+            return (
+                f"{mode}: {scheduled_c:.1f}°C → {corrected_c:.1f}°C "
+                f"({sign}{offset_c:.1f}°C offset) [{source}]{suffix}"
+            )
+
+        sp = corrected_c if corrected_c is not None else scheduled_c
         sp_str = f"{sp:.1f}°C" if sp is not None else "?"
-        return f"{mode} @ {sp_str} [{source}]"
+        return f"{mode} @ {sp_str} [{source}]{suffix}"
 
     @property
     def extra_state_attributes(self) -> dict:
         return {"decisions": self.coordinator.get_decision_log(self._zone_id)}
+
+
+class ClimateMLZoneCurrentBlock(CoordinatorEntity[HomeClimateMlCoordinator], SensorEntity):
+    """Active schedule block for the zone — mode and setpoint."""
+
+    _attr_should_poll = False
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator: HomeClimateMlCoordinator, zone: dict) -> None:
+        super().__init__(coordinator)
+        self._zone_id = zone["id"]
+        self._attr_name = f"ML — {zone['name']} Current Schedule Block"
+        self._attr_unique_id = f"{DOMAIN}_{self._zone_id}_current_block"
+        self._attr_device_info = _device_info(zone)
+
+    @property
+    def native_value(self) -> str | None:
+        block = self.coordinator.get_current_block(self._zone_id)
+        if block is None:
+            return "off (unscheduled)"
+        mode = block["mode"]
+        sp = block.get("setpoint_c")
+        start = block["start"].strftime("%H:%M")
+        end = block["end"].strftime("%H:%M")
+        if mode == "off":
+            return f"off ({start}–{end})"
+        sp_str = f"{sp:.1f}°C" if sp is not None else "?"
+        return f"{mode} @ {sp_str} ({start}–{end})"
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        block = self.coordinator.get_current_block(self._zone_id)
+        if block is None:
+            return {}
+        return {
+            "mode": block["mode"],
+            "setpoint_c": block.get("setpoint_c"),
+            "start": block["start"].strftime("%H:%M"),
+            "end": block["end"].strftime("%H:%M"),
+        }
+
+
+class ClimateMLZoneNextTransition(CoordinatorEntity[HomeClimateMlCoordinator], SensorEntity):
+    """Timestamp of the next schedule block boundary for the zone."""
+
+    _attr_should_poll = False
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator: HomeClimateMlCoordinator, zone: dict) -> None:
+        super().__init__(coordinator)
+        self._zone_id = zone["id"]
+        self._attr_name = f"ML — {zone['name']} Next Schedule Transition"
+        self._attr_unique_id = f"{DOMAIN}_{self._zone_id}_next_transition"
+        self._attr_device_info = _device_info(zone)
+
+    @property
+    def native_value(self) -> datetime | None:
+        return self.coordinator.get_next_transition(self._zone_id)

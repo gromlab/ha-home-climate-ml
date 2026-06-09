@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.4.5] — Decision log improvements + schedule sensors
+- Decision log state string now shows the full journey: scheduled setpoint → corrected setpoint with offset value (e.g. `cool: 21.0°C → 22.3°C (+1.3°C offset) [schedule] ✓`); when no offset applied: `cool @ 21.0°C [schedule] held`; ✓ = command sent, held = within tolerance
+- Decision log keys renamed: `setpoint_c` → `scheduled_c`, `command` → `commanded` (breaking if you reference log attributes directly)
+- `get_block` last-block fallback fixed: returns `("off", None)` when current time falls outside all defined schedule blocks — previously held the last block's mode indefinitely (breaking change for schedules that don't cover the full 24h)
+- New sensor per zone: **Current Schedule Block** — shows active block mode, setpoint, and time range; shows `off (unscheduled)` when between blocks
+- New sensor per zone: **Next Schedule Transition** — timestamp of next block boundary; uses DST-safe `start_of_local_day` for tomorrow's transitions
+- Version bump to 0.4.5
+
 ## [0.4.4] — Sensor availability when zone disabled
 - Numeric zone sensors (room temp, offset, corrected setpoint) now report `available = False` when the zone is disabled — shows as grey "Unavailable" instead of amber "Unknown", which is the correct HA semantic for intentionally-off data
 - Decision log sensor remains available even when zone is disabled (it records the disabled state)
