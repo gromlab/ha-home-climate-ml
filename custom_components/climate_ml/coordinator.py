@@ -36,7 +36,6 @@ class HomeClimateMlCoordinator(DataUpdateCoordinator[dict[str, ZoneData]]):
         entry_id: str,
         store: ClimateDataStore,
         zones: list[dict],
-        sense_only: dict[str, str],
         update_interval: timedelta,
         params: dict,
         controller_config: dict | None = None,
@@ -51,7 +50,6 @@ class HomeClimateMlCoordinator(DataUpdateCoordinator[dict[str, ZoneData]]):
         self._entry_id = entry_id
         self._store = store
         self._zones = zones
-        self._sense_only = sense_only
         self.params = params
         self._controller_config: dict = controller_config or {}
         self._controller_subentry_id = controller_subentry_id
@@ -225,9 +223,6 @@ class HomeClimateMlCoordinator(DataUpdateCoordinator[dict[str, ZoneData]]):
                     enabled=self._master_enabled and self._zone_enabled.get(zone_id, True),
                 )
 
-        for sense_id, sensor_entity in self._sense_only.items():
-            await self._log_sense_zone(sense_id, sensor_entity)
-
         # --- System-level data gathering (sun, ODU, weather) ---
         await self._gather_system_data(now)
 
@@ -293,6 +288,13 @@ class HomeClimateMlCoordinator(DataUpdateCoordinator[dict[str, ZoneData]]):
                         await self._maybe_log_sensor(zone_id, eva_label, "temperature", float(eva_state.state))
                     except (ValueError, TypeError):
                         pass
+
+        # Log occupancy if configured (binary: 1 = occupied, 0 = unoccupied)
+        occupancy_entity = zone.get("occupancy_entity", "")
+        if occupancy_entity:
+            occ_state = self.hass.states.get(occupancy_entity)
+            if occ_state and occ_state.state not in ("unavailable", "unknown"):
+                await self._maybe_log_sensor(zone_id, "occupancy", "presence", 1.0 if occ_state.state == "on" else 0.0)
 
         default_setpoint = self.params.get("default_setpoint_c", 21.0)
         override = self._overrides.get(zone_id)
@@ -453,13 +455,3 @@ class HomeClimateMlCoordinator(DataUpdateCoordinator[dict[str, ZoneData]]):
                     self._store.log_sensor_event, zone_id, source, metric, value, None
                 )
 
-    async def _log_sense_zone(self, zone_id: str, entity_id: str) -> None:
-        if not entity_id:
-            return
-        state = self.hass.states.get(entity_id)
-        if state and state.state not in ("unavailable", "unknown"):
-            try:
-                val = float(state.state)
-                await self._maybe_log_sensor(zone_id, "sense", "temperature", val)
-            except (ValueError, TypeError):
-                pass

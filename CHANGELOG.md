@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.4.8] — Controller consolidation + UX polish
+- **Options flow removed**: global settings (`update_interval_minutes`, `setpoint_min_c`, `setpoint_max_c`) moved into the Controller subentry — no more settings gear on the integration entry
+- **Controller form expanded**: 3 new fields at the top of the Controller form (decision loop interval, min/max setpoint bounds); all 9 fields have friendly labels and one-sentence descriptions
+- **Zone form expanded**: occupancy sensor picker added per zone (`binary_sensor` domain) — value logged each coordinator tick; no logic effect yet, ready for future ML
+- **"ML — " prefix removed from controller entities**: Override Duration, Setpoint Tolerance, Default Setpoint, Sensor Guard Threshold, and All Zones Enabled no longer carry the redundant prefix — the Controller device name provides context
+- **All form labels rewritten**: "heat pump head" → "Zone climate entity"; descriptions updated throughout to be future-proof for both heating and cooling, not heat-pump-specific
+- **Migration v4 → v5**: strips `update_interval_minutes`, `setpoint_min_c`, `setpoint_max_c`, `hallway_sensor`, `outdoor_sensor` from `entry.options`; these values remain accessible via `CONTROLLER_DEFAULTS` fallback until the user reconfigures the Controller subentry
+- Version bump to 0.4.8
+
 ## [0.4.7] — Controller UX fixes
 - **Duplicate devices fixed**: after platform setup, bare (no-subentry) device registry associations added by entity registration are removed — devices no longer appear in both "Devices that don't belong to a sub-entry" AND their subentry
 - **"Add ClimateML Controller" hides after first controller created**: `async_get_supported_subentry_types` now conditionally excludes the controller type when a controller subentry already exists

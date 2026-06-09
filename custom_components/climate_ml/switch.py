@@ -69,7 +69,7 @@ class ClimateMLMasterSwitch(
     Survives options reload via hass.data. Acts as AND gate with zone switches."""
 
     _attr_should_poll = False
-    _attr_name = "ML — All Zones Enabled"
+    _attr_name = "All Zones Enabled"
 
     def __init__(self, coordinator: HomeClimateMlCoordinator) -> None:
         super().__init__(coordinator)

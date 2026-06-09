@@ -12,7 +12,6 @@ from homeassistant.config_entries import (
     ConfigFlow,
     ConfigFlowResult,
     ConfigSubentryFlow,
-    OptionsFlow,
     SubentryFlowResult,
 )
 from homeassistant.core import callback
@@ -26,7 +25,7 @@ from homeassistant.helpers.selector import (
     TextSelector,
 )
 
-from .const import DEFAULT_OPTIONS, DOMAIN
+from .const import CONTROLLER_DEFAULTS, DEFAULT_OPTIONS, DOMAIN
 
 
 def _slugify(name: str) -> str:
@@ -44,7 +43,6 @@ def _unique_slug(slug: str, existing_ids: list[str]) -> str:
 
 
 def _normalise_time(s: str) -> str:
-    """Strip seconds from HH:MM:SS → HH:MM."""
     s = str(s).strip()
     if re.match(r"^\d{1,2}:\d{2}:\d{2}$", s):
         return s[:5]
@@ -52,7 +50,6 @@ def _normalise_time(s: str) -> str:
 
 
 def _normalise_blocks(blocks: list) -> list:
-    """Coerce types and normalise time strings in schedule blocks from ObjectSelector."""
     result = []
     for b in blocks:
         if not isinstance(b, dict):
@@ -114,6 +111,8 @@ def _zone_schema(
             EntitySelector(EntitySelectorConfig(domain="sensor")),
         vol.Optional("eva_out_entity", default=d.get("eva_out_entity", "")):
             EntitySelector(EntitySelectorConfig(domain="sensor")),
+        vol.Optional("occupancy_entity", default=d.get("occupancy_entity", "")):
+            EntitySelector(EntitySelectorConfig(domain="binary_sensor")),
         vol.Optional("weekday_blocks", default=d.get("weekday_blocks", [])): block_sel,
         vol.Optional("weekend_blocks", default=d.get("weekend_blocks", [])): block_sel,
     })
@@ -121,7 +120,16 @@ def _zone_schema(
 
 def _controller_schema(defaults: dict | None = None) -> vol.Schema:
     d = defaults or {}
+    sp_min = d.get("setpoint_min_c", CONTROLLER_DEFAULTS["setpoint_min_c"])
+    sp_max = d.get("setpoint_max_c", CONTROLLER_DEFAULTS["setpoint_max_c"])
     return vol.Schema({
+        vol.Optional("update_interval_minutes",
+                     default=d.get("update_interval_minutes", CONTROLLER_DEFAULTS["update_interval_minutes"])):
+            NumberSelector(NumberSelectorConfig(min=1, max=60, step=1, mode=NumberSelectorMode.BOX)),
+        vol.Optional("setpoint_min_c", default=sp_min):
+            NumberSelector(NumberSelectorConfig(min=10.0, max=20.0, step=0.5, mode=NumberSelectorMode.BOX)),
+        vol.Optional("setpoint_max_c", default=sp_max):
+            NumberSelector(NumberSelectorConfig(min=22.0, max=32.0, step=0.5, mode=NumberSelectorMode.BOX)),
         vol.Optional("odu_mode_entity", default=d.get("odu_mode_entity", "")):
             EntitySelector(EntitySelectorConfig(domain="sensor")),
         vol.Optional("outdoor_temp_entity", default=d.get("outdoor_temp_entity", "")):
@@ -142,7 +150,7 @@ def _controller_schema(defaults: dict | None = None) -> vol.Schema:
 # ---------------------------------------------------------------------------
 
 class ClimateMLConfigFlow(ConfigFlow, domain=DOMAIN):
-    VERSION = 4
+    VERSION = 5
 
     @classmethod
     @callback
@@ -150,7 +158,6 @@ class ClimateMLConfigFlow(ConfigFlow, domain=DOMAIN):
         cls, config_entry: ConfigEntry
     ) -> dict[str, type[ConfigSubentryFlow]]:
         types: dict[str, type[ConfigSubentryFlow]] = {"zone": ZoneSubentryFlowHandler}
-        # Only show "Add ClimateML Controller" if none exists yet
         has_controller = any(
             s.subentry_type == "controller" for s in config_entry.subentries.values()
         )
@@ -167,22 +174,16 @@ class ClimateMLConfigFlow(ConfigFlow, domain=DOMAIN):
             return self.async_create_entry(
                 title="ClimateML",
                 data={},
-                options=copy.deepcopy(DEFAULT_OPTIONS),
+                options={},
             )
         return self.async_show_form(step_id="user")
 
-    @staticmethod
-    @callback
-    def async_get_options_flow(config_entry: ConfigEntry) -> ClimateMLOptionsFlow:
-        return ClimateMLOptionsFlow()
-
 
 # ---------------------------------------------------------------------------
-# Zone subentry flow — add and reconfigure zones
+# Zone subentry flow
 # ---------------------------------------------------------------------------
 
 class ZoneSubentryFlowHandler(ConfigSubentryFlow):
-    """Each zone is a subentry: name, entities, EVA sensors, weekday/weekend schedule blocks."""
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -208,6 +209,7 @@ class ZoneSubentryFlowHandler(ConfigSubentryFlow):
                         "sensor_entity": user_input.get("sensor_entity", ""),
                         "eva_in_entity": user_input.get("eva_in_entity", ""),
                         "eva_out_entity": user_input.get("eva_out_entity", ""),
+                        "occupancy_entity": user_input.get("occupancy_entity", ""),
                         "schedule": {
                             "weekday": _normalise_blocks(user_input.get("weekday_blocks") or []),
                             "weekend": _normalise_blocks(user_input.get("weekend_blocks") or []),
@@ -216,8 +218,11 @@ class ZoneSubentryFlowHandler(ConfigSubentryFlow):
                 )
 
         entry = self._get_entry()
-        sp_min = entry.options.get("setpoint_min_c", 16.0)
-        sp_max = entry.options.get("setpoint_max_c", 28.0)
+        controller = next(
+            (s for s in entry.subentries.values() if s.subentry_type == "controller"), None
+        )
+        sp_min = (controller.data.get("setpoint_min_c") if controller else None) or CONTROLLER_DEFAULTS["setpoint_min_c"]
+        sp_max = (controller.data.get("setpoint_max_c") if controller else None) or CONTROLLER_DEFAULTS["setpoint_max_c"]
         return self.async_show_form(
             step_id="user",
             data_schema=_zone_schema(sp_min=sp_min, sp_max=sp_max),
@@ -244,6 +249,7 @@ class ZoneSubentryFlowHandler(ConfigSubentryFlow):
                         "sensor_entity": user_input.get("sensor_entity", ""),
                         "eva_in_entity": user_input.get("eva_in_entity", ""),
                         "eva_out_entity": user_input.get("eva_out_entity", ""),
+                        "occupancy_entity": user_input.get("occupancy_entity", ""),
                         "schedule": {
                             "weekday": _normalise_blocks(user_input.get("weekday_blocks") or []),
                             "weekend": _normalise_blocks(user_input.get("weekend_blocks") or []),
@@ -252,14 +258,18 @@ class ZoneSubentryFlowHandler(ConfigSubentryFlow):
                 )
 
         entry = self._get_entry()
-        sp_min = entry.options.get("setpoint_min_c", 16.0)
-        sp_max = entry.options.get("setpoint_max_c", 28.0)
+        controller = next(
+            (s for s in entry.subentries.values() if s.subentry_type == "controller"), None
+        )
+        sp_min = (controller.data.get("setpoint_min_c") if controller else None) or CONTROLLER_DEFAULTS["setpoint_min_c"]
+        sp_max = (controller.data.get("setpoint_max_c") if controller else None) or CONTROLLER_DEFAULTS["setpoint_max_c"]
         defaults = {
             "name": subentry.title,
             "head_entity": subentry.data.get("head_entity", ""),
             "sensor_entity": subentry.data.get("sensor_entity", ""),
             "eva_in_entity": subentry.data.get("eva_in_entity", ""),
             "eva_out_entity": subentry.data.get("eva_out_entity", ""),
+            "occupancy_entity": subentry.data.get("occupancy_entity", ""),
             "weekday_blocks": list(subentry.data.get("schedule", {}).get("weekday", [])),
             "weekend_blocks": list(subentry.data.get("schedule", {}).get("weekend", [])),
         }
@@ -271,89 +281,48 @@ class ZoneSubentryFlowHandler(ConfigSubentryFlow):
 
 
 # ---------------------------------------------------------------------------
-# Controller subentry flow — reconfigure only (auto-created by migration)
+# Controller subentry flow
 # ---------------------------------------------------------------------------
 
 class ControllerSubentryFlowHandler(ConfigSubentryFlow):
-    """Controller subentry: system-level entity pickers for ODU, weather, power, extras."""
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> SubentryFlowResult:
-        """Fresh-install path: user creates controller manually via 'Add ClimateML Controller'."""
         if user_input is not None:
             return self.async_create_entry(
                 title="ClimateML Controller",
                 unique_id="controller",
-                data={
-                    "odu_mode_entity": user_input.get("odu_mode_entity", ""),
-                    "outdoor_temp_entity": user_input.get("outdoor_temp_entity", ""),
-                    "extra_temp_entities": user_input.get("extra_temp_entities") or [],
-                    "power_entity": user_input.get("power_entity", ""),
-                    "energy_entity": user_input.get("energy_entity", ""),
-                    "weather_entity": user_input.get("weather_entity", ""),
-                },
+                data=self._clean_data(user_input),
             )
-        return self.async_show_form(
-            step_id="user",
-            data_schema=_controller_schema(),
-        )
+        return self.async_show_form(step_id="user", data_schema=_controller_schema())
 
     async def async_step_reconfigure(
         self, user_input: dict[str, Any] | None = None
     ) -> SubentryFlowResult:
         subentry = self._get_reconfigure_subentry()
-
         if user_input is not None:
             return self.async_update_and_abort(
                 self._get_entry(),
                 subentry,
                 title="ClimateML Controller",
-                data={
-                    "odu_mode_entity": user_input.get("odu_mode_entity", ""),
-                    "outdoor_temp_entity": user_input.get("outdoor_temp_entity", ""),
-                    "extra_temp_entities": user_input.get("extra_temp_entities") or [],
-                    "power_entity": user_input.get("power_entity", ""),
-                    "energy_entity": user_input.get("energy_entity", ""),
-                    "weather_entity": user_input.get("weather_entity", ""),
-                },
+                data=self._clean_data(user_input),
             )
-
-        defaults = dict(subentry.data)
         return self.async_show_form(
             step_id="reconfigure",
-            data_schema=_controller_schema(defaults),
+            data_schema=_controller_schema(dict(subentry.data)),
         )
 
-
-# ---------------------------------------------------------------------------
-# Options flow — global settings only (zones/controller managed via subentries)
-# ---------------------------------------------------------------------------
-
-class ClimateMLOptionsFlow(OptionsFlow):
-
-    async def async_step_init(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        opts = dict(self.config_entry.options)
-
-        if user_input is not None:
-            return self.async_create_entry(title="", data={**opts, **user_input})
-
-        sp_min = opts.get("setpoint_min_c", 16.0)
-        sp_max = opts.get("setpoint_max_c", 28.0)
-
-        schema = vol.Schema({
-            vol.Optional("update_interval_minutes", default=opts.get("update_interval_minutes", 5)):
-                NumberSelector(NumberSelectorConfig(min=1, max=60, step=1, mode=NumberSelectorMode.BOX)),
-            vol.Optional("setpoint_min_c", default=sp_min):
-                NumberSelector(NumberSelectorConfig(min=10.0, max=20.0, step=0.5, mode=NumberSelectorMode.BOX)),
-            vol.Optional("setpoint_max_c", default=sp_max):
-                NumberSelector(NumberSelectorConfig(min=22.0, max=32.0, step=0.5, mode=NumberSelectorMode.BOX)),
-            vol.Optional("hallway_sensor", default=opts.get("hallway_sensor", "")):
-                EntitySelector(EntitySelectorConfig(domain="sensor", multiple=False)),
-            vol.Optional("outdoor_sensor", default=opts.get("outdoor_sensor", "")):
-                EntitySelector(EntitySelectorConfig(domain="sensor", multiple=False)),
-        })
-
-        return self.async_show_form(step_id="init", data_schema=schema)
+    @staticmethod
+    def _clean_data(user_input: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "update_interval_minutes": int(user_input.get("update_interval_minutes", CONTROLLER_DEFAULTS["update_interval_minutes"])),
+            "setpoint_min_c": float(user_input.get("setpoint_min_c", CONTROLLER_DEFAULTS["setpoint_min_c"])),
+            "setpoint_max_c": float(user_input.get("setpoint_max_c", CONTROLLER_DEFAULTS["setpoint_max_c"])),
+            "odu_mode_entity": user_input.get("odu_mode_entity", ""),
+            "outdoor_temp_entity": user_input.get("outdoor_temp_entity", ""),
+            "extra_temp_entities": user_input.get("extra_temp_entities") or [],
+            "power_entity": user_input.get("power_entity", ""),
+            "energy_entity": user_input.get("energy_entity", ""),
+            "weather_entity": user_input.get("weather_entity", ""),
+        }

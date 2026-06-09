@@ -30,7 +30,7 @@ class NumberDef:
 _NUMBERS = [
     NumberDef(
         key="override_duration_minutes",
-        name="ML — Override Duration",
+        name="Override Duration",
         unique_suffix="override_duration",
         native_min=15,
         native_max=480,
@@ -40,7 +40,7 @@ _NUMBERS = [
     ),
     NumberDef(
         key="setpoint_tolerance_c",
-        name="ML — Setpoint Tolerance",
+        name="Setpoint Tolerance",
         unique_suffix="setpoint_tolerance",
         native_min=0.1,
         native_max=2.0,
@@ -50,7 +50,7 @@ _NUMBERS = [
     ),
     NumberDef(
         key="default_setpoint_c",
-        name="ML — Default Setpoint",
+        name="Default Setpoint",
         unique_suffix="default_setpoint",
         native_min=16.0,
         native_max=28.0,
@@ -60,7 +60,7 @@ _NUMBERS = [
     ),
     NumberDef(
         key="sensor_guard_threshold_c",
-        name="ML — Sensor Guard Threshold",
+        name="Sensor Guard Threshold",
         unique_suffix="sensor_guard_threshold",
         native_min=1.0,
         native_max=10.0,

@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "ClimateML",
-        "description": "Add the ClimateML integration. Configure global settings in Options; add zones and configure the controller via the integration page after setup."
+        "description": "Add the ClimateML integration. Add zones and configure the controller via the integration page after setup."
       }
     },
     "abort": {
@@ -22,39 +22,46 @@
           "title": "Add Zone",
           "data": {
             "name": "Zone name",
-            "head_entity": "Heat pump head (climate entity)",
-            "sensor_entity": "Room temperature sensor",
-            "eva_in_entity": "EVA in temperature sensor (optional)",
-            "eva_out_entity": "EVA out temperature sensor (optional)",
+            "head_entity": "Zone climate entity",
+            "sensor_entity": "Room temperature",
+            "eva_in_entity": "EVA inlet temperature",
+            "eva_out_entity": "EVA outlet temperature",
+            "occupancy_entity": "Occupancy sensor",
             "weekday_blocks": "Weekday schedule",
             "weekend_blocks": "Weekend schedule"
           },
           "data_description": {
-            "name": "Display name — used to generate the stable zone ID",
-            "head_entity": "The climate entity controlling this zone's heat pump head",
-            "sensor_entity": "The sensor reporting actual room temperature",
-            "eva_in_entity": "Refrigerant inlet temperature from ESPHome samsung-hvac — logged for future ML",
-            "eva_out_entity": "Refrigerant outlet temperature from ESPHome samsung-hvac — logged for future ML",
-            "weekday_blocks": "Time blocks for Monday–Friday. Add as many as needed.",
-            "weekend_blocks": "Time blocks for Saturday–Sunday. Add as many as needed."
+            "name": "Display name — also generates the stable internal zone ID",
+            "head_entity": "The climate entity for this zone — ClimateML will command it for both cooling and heating",
+            "sensor_entity": "Actual room temperature sensor — the reference used to calculate offset corrections",
+            "eva_in_entity": "Refrigerant temperature entering the indoor unit — logged for future ML efficiency analysis",
+            "eva_out_entity": "Refrigerant temperature leaving the indoor unit — logged for future ML efficiency analysis",
+            "occupancy_entity": "Presence sensor for this zone — used later to adjust behaviour when the zone is unoccupied",
+            "weekday_blocks": "Cooling and heating schedule for Monday–Friday",
+            "weekend_blocks": "Cooling and heating schedule for Saturday–Sunday"
           }
         },
         "reconfigure": {
           "title": "Edit Zone",
           "data": {
             "name": "Zone name",
-            "head_entity": "Heat pump head (climate entity)",
-            "sensor_entity": "Room temperature sensor",
-            "eva_in_entity": "EVA in temperature sensor (optional)",
-            "eva_out_entity": "EVA out temperature sensor (optional)",
+            "head_entity": "Zone climate entity",
+            "sensor_entity": "Room temperature",
+            "eva_in_entity": "EVA inlet temperature",
+            "eva_out_entity": "EVA outlet temperature",
+            "occupancy_entity": "Occupancy sensor",
             "weekday_blocks": "Weekday schedule",
             "weekend_blocks": "Weekend schedule"
           },
           "data_description": {
-            "eva_in_entity": "Refrigerant inlet temperature from ESPHome samsung-hvac",
-            "eva_out_entity": "Refrigerant outlet temperature from ESPHome samsung-hvac",
-            "weekday_blocks": "Time blocks for Monday–Friday",
-            "weekend_blocks": "Time blocks for Saturday–Sunday"
+            "name": "Display name — also generates the stable internal zone ID",
+            "head_entity": "The climate entity for this zone — ClimateML will command it for both cooling and heating",
+            "sensor_entity": "Actual room temperature sensor — the reference used to calculate offset corrections",
+            "eva_in_entity": "Refrigerant temperature entering the indoor unit — logged for future ML efficiency analysis",
+            "eva_out_entity": "Refrigerant temperature leaving the indoor unit — logged for future ML efficiency analysis",
+            "occupancy_entity": "Presence sensor for this zone — used later to adjust behaviour when the zone is unoccupied",
+            "weekday_blocks": "Cooling and heating schedule for Monday–Friday",
+            "weekend_blocks": "Cooling and heating schedule for Saturday–Sunday"
           }
         }
       },
@@ -71,61 +78,57 @@
         "user": {
           "title": "ClimateML Controller",
           "data": {
-            "odu_mode_entity": "Heat pump ODU mode sensor (optional)",
-            "outdoor_temp_entity": "Outdoor temperature sensor (optional)",
-            "extra_temp_entities": "Additional indoor temperature sensors (optional)",
-            "power_entity": "Heat pump power sensor (optional)",
-            "energy_entity": "Heat pump energy sensor (optional)",
-            "weather_entity": "Weather entity for forecast (optional)"
+            "update_interval_minutes": "Decision loop interval",
+            "setpoint_min_c": "Minimum allowed setpoint",
+            "setpoint_max_c": "Maximum allowed setpoint",
+            "odu_mode_entity": "Outdoor unit mode",
+            "outdoor_temp_entity": "Outdoor temperature",
+            "extra_temp_entities": "Other indoor sensors",
+            "power_entity": "Power consumption",
+            "energy_entity": "Energy meter",
+            "weather_entity": "Weather service"
           },
           "data_description": {
-            "odu_mode_entity": "Compressor/ODU operating mode — ground truth for heat pump state (e.g. sensor.samsung_hvac_odu_mode)",
-            "outdoor_temp_entity": "Outdoor temperature — used as additional peer reading for sensor guard",
-            "extra_temp_entities": "Non-zone indoor sensors (e.g. hallway) used as peer readings in the sensor guard anomaly check",
-            "power_entity": "Real-time power draw — logged for future COP calculations",
-            "energy_entity": "Cumulative energy — logged for future efficiency trending",
-            "weather_entity": "Used to fetch hourly forecast for solar gain anticipation (future ML feature)"
+            "update_interval_minutes": "How often ClimateML recalculates and commands each zone — lower is more responsive, higher sends fewer commands",
+            "setpoint_min_c": "Lowest temperature ClimateML will ever command to any zone climate entity",
+            "setpoint_max_c": "Highest temperature ClimateML will ever command to any zone climate entity",
+            "odu_mode_entity": "Current operating mode of the outdoor unit — used to know when the system is actively conditioning",
+            "outdoor_temp_entity": "Outside air temperature — used as a peer reading in the sensor guard anomaly check",
+            "extra_temp_entities": "Non-zone indoor sensors (hallway, landing, etc.) — used as peer readings in the sensor guard",
+            "power_entity": "Real-time system power draw — logged for future efficiency and COP tracking",
+            "energy_entity": "Cumulative system energy use — logged for daily efficiency trends",
+            "weather_entity": "Provides hourly forecasts for anticipating solar gain and outdoor conditions (future ML)"
           }
         },
         "reconfigure": {
           "title": "Edit ClimateML Controller",
           "data": {
-            "odu_mode_entity": "Heat pump ODU mode sensor (optional)",
-            "outdoor_temp_entity": "Outdoor temperature sensor (optional)",
-            "extra_temp_entities": "Additional indoor temperature sensors (optional)",
-            "power_entity": "Heat pump power sensor (optional)",
-            "energy_entity": "Heat pump energy sensor (optional)",
-            "weather_entity": "Weather entity for forecast (optional)"
+            "update_interval_minutes": "Decision loop interval",
+            "setpoint_min_c": "Minimum allowed setpoint",
+            "setpoint_max_c": "Maximum allowed setpoint",
+            "odu_mode_entity": "Outdoor unit mode",
+            "outdoor_temp_entity": "Outdoor temperature",
+            "extra_temp_entities": "Other indoor sensors",
+            "power_entity": "Power consumption",
+            "energy_entity": "Energy meter",
+            "weather_entity": "Weather service"
+          },
+          "data_description": {
+            "update_interval_minutes": "How often ClimateML recalculates and commands each zone — lower is more responsive, higher sends fewer commands",
+            "setpoint_min_c": "Lowest temperature ClimateML will ever command to any zone climate entity",
+            "setpoint_max_c": "Highest temperature ClimateML will ever command to any zone climate entity",
+            "odu_mode_entity": "Current operating mode of the outdoor unit — used to know when the system is actively conditioning",
+            "outdoor_temp_entity": "Outside air temperature — used as a peer reading in the sensor guard anomaly check",
+            "extra_temp_entities": "Non-zone indoor sensors (hallway, landing, etc.) — used as peer readings in the sensor guard",
+            "power_entity": "Real-time system power draw — logged for future efficiency and COP tracking",
+            "energy_entity": "Cumulative system energy use — logged for daily efficiency trends",
+            "weather_entity": "Provides hourly forecasts for anticipating solar gain and outdoor conditions (future ML)"
           }
         }
       },
       "abort": {
         "reconfigure_successful": "Controller updated successfully"
       }
-    }
-  },
-  "options": {
-    "step": {
-      "init": {
-        "title": "Global Settings",
-        "data": {
-          "update_interval_minutes": "Update interval (minutes)",
-          "setpoint_min_c": "Minimum setpoint (°C)",
-          "setpoint_max_c": "Maximum setpoint (°C)",
-          "hallway_sensor": "Hallway temperature sensor (optional)",
-          "outdoor_sensor": "Outdoor temperature sensor (optional)"
-        },
-        "data_description": {
-          "update_interval_minutes": "How often the decision loop runs",
-          "setpoint_min_c": "Minimum allowed corrected setpoint",
-          "setpoint_max_c": "Maximum allowed corrected setpoint",
-          "hallway_sensor": "Used as a whole-house reference temperature",
-          "outdoor_sensor": "Legacy outdoor sensor — prefer ODU outdoor entity in Controller"
-        }
-      }
-    },
-    "error": {
-      "unknown": "Unexpected error"
     }
   }
 }
