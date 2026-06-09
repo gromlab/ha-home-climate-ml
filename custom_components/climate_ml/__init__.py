@@ -129,6 +129,7 @@ async def async_setup_entry(
         if None in subentries and any(s is not None for s in subentries):
             dreg_post.async_update_device(
                 device.id,
+                remove_config_entry_id=entry.entry_id,
                 remove_config_subentry_id=None,
             )
 
