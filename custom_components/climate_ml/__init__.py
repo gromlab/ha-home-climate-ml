@@ -9,7 +9,7 @@ from homeassistant.const import Platform
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.event import async_track_time_change
 
-from .const import DEFAULT_OPTIONS, DOMAIN, LOGGER
+from .const import DEFAULT_OPTIONS, DOMAIN, LOGGER, _REMOVED_OPTIONS
 from .coordinator import HomeClimateMlCoordinator
 from .store import ClimateDataStore
 
@@ -17,9 +17,11 @@ if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
     from homeassistant.config_entries import ConfigEntry
 
-PLATFORMS: list[Platform] = [Platform.CLIMATE, Platform.SENSOR, Platform.SWITCH]
+PLATFORMS: list[Platform] = [Platform.CLIMATE, Platform.NUMBER, Platform.SENSOR, Platform.SWITCH]
 
 type ClimateMLConfigEntry = ConfigEntry
+
+_CONTROLLER_IDENTIFIER = "controller"
 
 
 async def async_setup_entry(
@@ -28,33 +30,54 @@ async def async_setup_entry(
 ) -> bool:
     options = entry.options
 
-    # Zones come from subentries; subentry unique_id is the stable zone slug.
-    # Build a parallel zone_id → subentry_id map for device registry linkage.
+    # Zones come from zone subentries; build zone list and zone_id → subentry_id map.
     zone_subentry_map: dict[str, str] = {}
     zones = []
-    for s in entry.subentries.values():
-        if s.subentry_type != "zone":
-            continue
-        zone_id = s.unique_id or s.subentry_id
-        zones.append({
-            "id": zone_id,
-            "name": s.title,
-            "head_entity": s.data.get("head_entity", ""),
-            "sensor_entity": s.data.get("sensor_entity", ""),
-            "schedule": s.data.get("schedule", {"weekday": [], "weekend": []}),
-        })
-        zone_subentry_map[zone_id] = s.subentry_id
+    controller_subentry_id: str | None = None
+    controller_config: dict = {}
 
-    # Sync device registry: link each zone device to its subentry and remove
-    # devices whose subentry was deleted.
+    for s in entry.subentries.values():
+        if s.subentry_type == "zone":
+            zone_id = s.unique_id or s.subentry_id
+            zones.append({
+                "id": zone_id,
+                "name": s.title,
+                "head_entity": s.data.get("head_entity", ""),
+                "sensor_entity": s.data.get("sensor_entity", ""),
+                "eva_in_entity": s.data.get("eva_in_entity", ""),
+                "eva_out_entity": s.data.get("eva_out_entity", ""),
+                "schedule": s.data.get("schedule", {"weekday": [], "weekend": []}),
+            })
+            zone_subentry_map[zone_id] = s.subentry_id
+        elif s.subentry_type == "controller":
+            controller_subentry_id = s.subentry_id
+            controller_config = dict(s.data)
+
+    # Sync device registry: remove orphaned zone devices, create/update zone + controller devices.
     dreg = dr.async_get(hass)
     current_zone_ids = {z["id"] for z in zones}
+    protected_identifiers = {_CONTROLLER_IDENTIFIER}
 
     for device in dr.async_entries_for_config_entry(dreg, entry.entry_id):
-        for ident_domain, zone_id in device.identifiers:
-            if ident_domain == DOMAIN and zone_id not in current_zone_ids:
+        for ident_domain, ident_value in device.identifiers:
+            if (
+                ident_domain == DOMAIN
+                and ident_value not in current_zone_ids
+                and ident_value not in protected_identifiers
+            ):
                 dreg.async_remove_device(device.id)
                 break
+
+    # Controller device — create before async_forward_entry_setups so NUMBER entities can reference it.
+    if controller_subentry_id is not None:
+        dreg.async_get_or_create(
+            config_entry_id=entry.entry_id,
+            config_subentry_id=controller_subentry_id,
+            identifiers={(DOMAIN, _CONTROLLER_IDENTIFIER)},
+            name="ClimateML Controller",
+            manufacturer="ClimateML",
+            model="System Controller",
+        )
 
     for zone in zones:
         dreg.async_get_or_create(
@@ -74,11 +97,8 @@ async def async_setup_entry(
     }
     params = {
         k: options.get(k, DEFAULT_OPTIONS[k])
-        for k in (
-            "update_interval_minutes", "override_duration_minutes", "setpoint_tolerance_c",
-            "offset_clamp_c", "setpoint_min_c", "setpoint_max_c", "default_setpoint_c",
-            "force_cool_threshold_c", "force_cool_clear_c",
-        )
+        for k in DEFAULT_OPTIONS
+        if k not in ("hallway_sensor", "outdoor_sensor")
     }
 
     db_path = hass.config.path("climate_ml", "decisions.db")
@@ -92,6 +112,8 @@ async def async_setup_entry(
         sense_only=sense_only,
         update_interval=timedelta(minutes=params["update_interval_minutes"]),
         params=params,
+        controller_config=controller_config,
+        controller_subentry_id=controller_subentry_id,
     )
 
     entry.runtime_data = coordinator
@@ -165,5 +187,28 @@ async def async_migrate_entry(
         new_options = {k: v for k, v in entry.options.items() if k != "zones"}
         hass.config_entries.async_update_entry(entry, options=new_options, version=3)
         LOGGER.info("Migration to v3 complete (from v2, %d zones migrated)", len(old_zones))
+
+    if entry.version == 3:
+        # v3 → v4: create controller subentry, strip removed option keys, add new defaults.
+        has_controller = any(
+            s.subentry_type == "controller" for s in entry.subentries.values()
+        )
+        if not has_controller:
+            hass.config_entries.async_add_subentry(
+                entry,
+                ConfigSubentry(
+                    data=MappingProxyType({}),
+                    subentry_type="controller",
+                    title="ClimateML Controller",
+                    unique_id=_CONTROLLER_IDENTIFIER,
+                ),
+            )
+            LOGGER.info("Migration to v4: controller subentry created")
+
+        new_options = {k: v for k, v in entry.options.items() if k not in _REMOVED_OPTIONS}
+        if "sensor_guard_threshold_c" not in new_options:
+            new_options["sensor_guard_threshold_c"] = DEFAULT_OPTIONS["sensor_guard_threshold_c"]
+        hass.config_entries.async_update_entry(entry, options=new_options, version=4)
+        LOGGER.info("Migration to v4 complete")
 
     return True

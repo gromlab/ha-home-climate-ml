@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.4.6] — ClimateML Controller subentry
+- New subentry type **ClimateML Controller**: system-level entity pickers for ODU mode, outdoor temp, extra indoor temps (multi-select for sensor guard), power, energy, and weather. Auto-created by v3→v4 migration; configure via integration page → ClimateML Controller → Configure
+- **Master switch anchored to Controller device**: `ML — All Zones Enabled` now appears under ClimateML Controller in the device list instead of floating
+- **4 new NUMBER entities** on Controller device: Override Duration (15–480 min), Setpoint Tolerance (0.1–2.0°C), Default Setpoint (16–28°C), Sensor Guard Threshold (1.0–10.0°C). Values persist across restarts via RestoreEntity; update coordinator in-place without triggering integration reload
+- **Force-cool logic removed**: the `force_cool_threshold_c` / `force_cool_clear_c` safety override has been removed — it was too blunt and too complicated at this stage
+- **Offset clamp replaced by sensor guard**: instead of clamping the offset to a fixed max, the coordinator now computes a peer-average across all active zone sensors + extra_temp_entities. If any zone sensor deviates more than the guard threshold from the average, its offset is zeroed and a warning is logged — catches defective sensors, not normal offsets
+- **EVA in/out entity pickers added to zone form**: select `sensor.samsung_hvac_{zone}_eva_in_temperature` / `eva_out_temperature` per zone; values logged each coordinator tick for future ML
+- **Sun elevation and azimuth** logged every coordinator tick from `sun.sun` (always present in HA) — solar gain data for future ML
+- **Weather forecast**: hourly 12h forecast fetched each tick via `weather.get_forecasts` service (try/except wrapped so unavailability never fails the coordinator) — stored in debug log for future ML
+- Entry VERSION bumped to 4; `async_migrate_entry` handles v1→v3→v4 and v2→v3→v4 chains
+- **Breaking**: `force_cool_threshold_c`, `force_cool_clear_c`, `offset_clamp_c` removed from options — stripped on migration
+- Version bump to 0.4.6
+
 ## [0.4.5] — Decision log improvements + schedule sensors
 - Decision log state string now shows the full journey: scheduled setpoint → corrected setpoint with offset value (e.g. `cool: 21.0°C → 22.3°C (+1.3°C offset) [schedule] ✓`); when no offset applied: `cool @ 21.0°C [schedule] held`; ✓ = command sent, held = within tolerance
 - Decision log keys renamed: `setpoint_c` → `scheduled_c`, `command` → `commanded` (breaking if you reference log attributes directly)
