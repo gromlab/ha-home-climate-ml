@@ -127,7 +127,8 @@
         }
       },
       "abort": {
-        "reconfigure_successful": "Controller updated successfully"
+        "reconfigure_successful": "Controller updated successfully",
+        "controller_already_configured": "A ClimateML Controller is already configured"
       }
     }
   }

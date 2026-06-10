@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.4.8-fix] — Entity setup + controller configure button
+- **Drop bare-subentry cleanup block**: the post-platform-setup `async_update_device` call that removed bare device associations was using an API that changed in HA 2026.5/2026.6 — it caused `async_setup_entry` to crash before entity platforms registered, leaving all devices with zero entities. Removed: the cosmetic "Devices that don't belong to a sub-entry" de-duplication is no longer attempted (devices may appear in both the subentry list and the bare list in some HA versions, which is benign)
+- **Controller Configure button restored**: `async_get_supported_subentry_types` now always includes `ControllerSubentryFlowHandler` so HA exposes the reconfigure flow on the existing controller subentry. Duplicate-add protection moved into `async_step_user` (aborts with `controller_already_configured` if one already exists)
+
 ## [0.4.8] — Controller consolidation + UX polish
 - **Options flow removed**: global settings (`update_interval_minutes`, `setpoint_min_c`, `setpoint_max_c`) moved into the Controller subentry — no more settings gear on the integration entry
 - **Controller form expanded**: 3 new fields at the top of the Controller form (decision loop interval, min/max setpoint bounds); all 9 fields have friendly labels and one-sentence descriptions
