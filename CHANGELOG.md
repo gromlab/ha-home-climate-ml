@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.4.9-fix] — Remove stale bare device association (final duplicate fix)
+- **Root cause identified by Opus review**: the device registry only ever unions subentry IDs onto the existing set — it never retracts old entries. Devices registered before v0.4.9 have a stale bare `(entry_id, None)` association alongside the correct `(entry_id, subentry_id)`, causing both the subentry listing and "Devices without a sub-entry" listing to show
+- **Fix**: after `async_forward_entry_setups` (which migrates entity registry entries from `config_subentry_id=None` to the real subentry ID), remove the bare device association via `async_update_device(remove_config_entry_id=..., remove_config_subentry_id=None)` — now safe because no entities remain on `None`, so the device-update listener cannot orphan them
+- Previous attempts (#22–#25) failed because entities still had `config_subentry_id=None` at cleanup time; v0.4.9 fixed entity registration first, making this cleanup safe
+
 ## [0.4.9] — Per-subentry entity registration (duplicate device fix)
 - **Devices no longer appear under "Devices without a sub-entry"**: all entity platforms now pass `config_subentry_id` to `async_add_entities` — the HA-recommended pattern (from `kitchen_sink` demo). This stamps both the device registry and entity registry entries with the correct subentry ID, so no bare `(entry_id, None)` association is ever created
 - Controller entities (4 NUMBER + master switch) registered under the controller subentry

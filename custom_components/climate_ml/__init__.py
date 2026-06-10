@@ -122,6 +122,33 @@ async def async_setup_entry(
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     entry.async_on_unload(entry.add_update_listener(async_reload_entry))
 
+    # De-duplicate device sub-entry associations.
+    #
+    # Earlier versions (and any entity added before v0.4.9 carried the entry's
+    # devices into the registry with a *bare* association — config_subentry_id
+    # = None. v0.4.9 registers entities under their real sub-entry, but the
+    # additive logic in device_registry._async_update_device only ever UNIONS
+    # sub-entry ids onto the existing set; it never retracts the stale None.
+    # The device therefore ends up with {None, <real_subentry_id>} and shows up
+    # both under its sub-entry AND under "Devices without a sub-entry".
+    #
+    # async_forward_entry_setups has already run, so entity_registry has migrated
+    # every entity from config_subentry_id=None to its real sub-entry (see
+    # entity_registry._async_update_entity). It is now safe to drop the bare
+    # device association: the registry's device-update listener only removes
+    # entities whose config_subentry_id is still in the removed set, and none
+    # remain on None. Removing None leaves {<real_subentry_id>}, so the device
+    # is retained (it is not deleted unless its association set becomes empty).
+    dreg_post = dr.async_get(hass)
+    for device in dr.async_entries_for_config_entry(dreg_post, entry.entry_id):
+        subentries = device.config_entries_subentries.get(entry.entry_id, set())
+        if None in subentries and any(s is not None for s in subentries):
+            dreg_post.async_update_device(
+                device.id,
+                remove_config_entry_id=entry.entry_id,
+                remove_config_subentry_id=None,
+            )
+
     async def _prune(_now):
         await hass.async_add_executor_job(store.prune)
 
