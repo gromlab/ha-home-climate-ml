@@ -49,14 +49,17 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     coordinator: HomeClimateMlCoordinator = entry.runtime_data
-    entities = []
     for zone in coordinator.zones:
-        for sensor_def in _SENSORS:
-            entities.append(ClimateMLZoneSensor(coordinator, zone, sensor_def))
-        entities.append(ClimateMLZoneDecisionLog(coordinator, zone))
-        entities.append(ClimateMLZoneCurrentBlock(coordinator, zone))
-        entities.append(ClimateMLZoneNextTransition(coordinator, zone))
-    async_add_entities(entities)
+        entities = [ClimateMLZoneSensor(coordinator, zone, s) for s in _SENSORS]
+        entities += [
+            ClimateMLZoneDecisionLog(coordinator, zone),
+            ClimateMLZoneCurrentBlock(coordinator, zone),
+            ClimateMLZoneNextTransition(coordinator, zone),
+        ]
+        async_add_entities(
+            entities,
+            config_subentry_id=coordinator.zone_subentry_map.get(zone["id"]),
+        )
 
 
 def _device_info(zone: dict) -> DeviceInfo:

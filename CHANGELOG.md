@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.9] — Per-subentry entity registration (duplicate device fix)
+- **Devices no longer appear under "Devices without a sub-entry"**: all entity platforms now pass `config_subentry_id` to `async_add_entities` — the HA-recommended pattern (from `kitchen_sink` demo). This stamps both the device registry and entity registry entries with the correct subentry ID, so no bare `(entry_id, None)` association is ever created
+- Controller entities (4 NUMBER + master switch) registered under the controller subentry
+- Zone entities (climate, sensors, switches) registered under each zone's own subentry
+- `HomeClimateMlCoordinator` gains `zone_subentry_map` (zone_id → subentry_id) and `controller_subentry_id` property, used by all platforms at registration time
+- Version bump to 0.4.9
+
 ## [0.4.8-fix2] — Drop bare-subentry cleanup permanently
 - **Remove bare-subentry cleanup entirely**: removing the bare `(entry_id, None)` device association caused HA to consider entity registry entries (which store `config_subentry_id=None`) orphaned — silently dropping all entities from both ClimateML devices. The duplicate-device appearance in "Devices without a sub-entry" is a known cosmetic limitation of how `async_forward_entry_setups` registers entities; fixing it requires per-subentry entity setup which is a future HA API concern
 

@@ -19,12 +19,15 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     coordinator: HomeClimateMlCoordinator = entry.runtime_data
-    entities: list = [ClimateMLMasterSwitch(coordinator)]
-    entities += [
-        ClimateMLZoneSwitch(coordinator, zone)
-        for zone in coordinator.zones
-    ]
-    async_add_entities(entities)
+    async_add_entities(
+        [ClimateMLMasterSwitch(coordinator)],
+        config_subentry_id=coordinator.controller_subentry_id,
+    )
+    for zone in coordinator.zones:
+        async_add_entities(
+            [ClimateMLZoneSwitch(coordinator, zone)],
+            config_subentry_id=coordinator.zone_subentry_map.get(zone["id"]),
+        )
 
 
 class ClimateMLZoneSwitch(
