@@ -1,7 +1,7 @@
 # Changelog
 
-## [0.4.8-fix2] — Safe bare-subentry cleanup (duplicate device fix)
-- **Re-add bare-subentry cleanup with try/except**: the `async_update_device` call is wrapped so a future HA device registry API change cannot crash `async_setup_entry` — it degrades gracefully (device may appear twice) instead of breaking entity setup
+## [0.4.8-fix2] — Drop bare-subentry cleanup permanently
+- **Remove bare-subentry cleanup entirely**: removing the bare `(entry_id, None)` device association caused HA to consider entity registry entries (which store `config_subentry_id=None`) orphaned — silently dropping all entities from both ClimateML devices. The duplicate-device appearance in "Devices without a sub-entry" is a known cosmetic limitation of how `async_forward_entry_setups` registers entities; fixing it requires per-subentry entity setup which is a future HA API concern
 
 ## [0.4.8-fix] — Entity setup + controller configure button
 - **Drop bare-subentry cleanup block**: the post-platform-setup `async_update_device` call that removed bare device associations was using an API that changed in HA 2026.5/2026.6 — it caused `async_setup_entry` to crash before entity platforms registered, leaving all devices with zero entities. Removed: the cosmetic "Devices that don't belong to a sub-entry" de-duplication is no longer attempted (devices may appear in both the subentry list and the bare list in some HA versions, which is benign)
