@@ -1,5 +1,8 @@
 # Changelog
 
+## [0.4.8-fix2] — Safe bare-subentry cleanup (duplicate device fix)
+- **Re-add bare-subentry cleanup with try/except**: the `async_update_device` call is wrapped so a future HA device registry API change cannot crash `async_setup_entry` — it degrades gracefully (device may appear twice) instead of breaking entity setup
+
 ## [0.4.8-fix] — Entity setup + controller configure button
 - **Drop bare-subentry cleanup block**: the post-platform-setup `async_update_device` call that removed bare device associations was using an API that changed in HA 2026.5/2026.6 — it caused `async_setup_entry` to crash before entity platforms registered, leaving all devices with zero entities. Removed: the cosmetic "Devices that don't belong to a sub-entry" de-duplication is no longer attempted (devices may appear in both the subentry list and the bare list in some HA versions, which is benign)
 - **Controller Configure button restored**: `async_get_supported_subentry_types` now always includes `ControllerSubentryFlowHandler` so HA exposes the reconfigure flow on the existing controller subentry. Duplicate-add protection moved into `async_step_user` (aborts with `controller_already_configured` if one already exists)
