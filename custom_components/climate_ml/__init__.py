@@ -121,22 +121,6 @@ async def async_setup_entry(
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     entry.async_on_unload(entry.add_update_listener(async_reload_entry))
 
-    # Remove bare (no-subentry) device associations added by entity platform registration.
-    # Without this, devices appear under both their subentry AND "Devices without a sub-entry".
-    # Wrapped in try/except — this is cosmetic; a future HA API change must not break setup.
-    dreg_post = dr.async_get(hass)
-    for device in dr.async_entries_for_config_entry(dreg_post, entry.entry_id):
-        subentries = device.config_entries_subentries.get(entry.entry_id, set())
-        if None in subentries and any(s is not None for s in subentries):
-            try:
-                dreg_post.async_update_device(
-                    device.id,
-                    remove_config_entry_id=entry.entry_id,
-                    remove_config_subentry_id=None,
-                )
-            except Exception:  # noqa: BLE001
-                LOGGER.debug("bare-subentry cleanup skipped (HA API changed)")
-
     async def _prune(_now):
         await hass.async_add_executor_job(store.prune)
 
