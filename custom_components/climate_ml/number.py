@@ -77,10 +77,10 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     coordinator: HomeClimateMlCoordinator = entry.runtime_data
-    async_add_entities([
-        ClimateMLControllerNumber(coordinator, defn)
-        for defn in _NUMBERS
-    ])
+    async_add_entities(
+        [ClimateMLControllerNumber(coordinator, defn) for defn in _NUMBERS],
+        config_subentry_id=coordinator.controller_subentry_id,
+    )
 
 
 class ClimateMLControllerNumber(NumberEntity, RestoreEntity):

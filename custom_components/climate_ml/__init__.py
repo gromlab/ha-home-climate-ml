@@ -111,6 +111,7 @@ async def async_setup_entry(
         params=params,
         controller_config=controller_config,
         controller_subentry_id=controller_subentry_id,
+        zone_subentry_map=zone_subentry_map,
     )
 
     entry.runtime_data = coordinator

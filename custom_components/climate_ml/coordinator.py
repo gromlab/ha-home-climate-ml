@@ -40,6 +40,7 @@ class HomeClimateMlCoordinator(DataUpdateCoordinator[dict[str, ZoneData]]):
         params: dict,
         controller_config: dict | None = None,
         controller_subentry_id: str | None = None,
+        zone_subentry_map: dict[str, str] | None = None,
     ) -> None:
         super().__init__(
             hass,
@@ -53,6 +54,7 @@ class HomeClimateMlCoordinator(DataUpdateCoordinator[dict[str, ZoneData]]):
         self.params = params
         self._controller_config: dict = controller_config or {}
         self._controller_subentry_id = controller_subentry_id
+        self.zone_subentry_map: dict[str, str] = zone_subentry_map or {}
 
         setpoint_min = params["setpoint_min_c"]
         setpoint_max = params["setpoint_max_c"]
@@ -73,6 +75,10 @@ class HomeClimateMlCoordinator(DataUpdateCoordinator[dict[str, ZoneData]]):
     @property
     def zones(self) -> list[dict]:
         return self._zones
+
+    @property
+    def controller_subentry_id(self) -> str | None:
+        return self._controller_subentry_id
 
     @property
     def schedules(self) -> dict[str, dict[str, list[ScheduleBlock]]]:
