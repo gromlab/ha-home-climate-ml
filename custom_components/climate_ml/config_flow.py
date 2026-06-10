@@ -107,11 +107,11 @@ def _zone_schema(
             EntitySelector(EntitySelectorConfig(domain="climate")),
         vol.Required("sensor_entity", default=d.get("sensor_entity", "")):
             EntitySelector(EntitySelectorConfig(domain="sensor")),
-        vol.Optional("eva_in_entity", default=d.get("eva_in_entity", "")):
+        vol.Optional("eva_in_entity", default=d.get("eva_in_entity") or vol.UNDEFINED):
             EntitySelector(EntitySelectorConfig(domain="sensor")),
-        vol.Optional("eva_out_entity", default=d.get("eva_out_entity", "")):
+        vol.Optional("eva_out_entity", default=d.get("eva_out_entity") or vol.UNDEFINED):
             EntitySelector(EntitySelectorConfig(domain="sensor")),
-        vol.Optional("occupancy_entity", default=d.get("occupancy_entity", "")):
+        vol.Optional("occupancy_entity", default=d.get("occupancy_entity") or vol.UNDEFINED):
             EntitySelector(EntitySelectorConfig(domain="binary_sensor")),
         vol.Optional("weekday_blocks", default=d.get("weekday_blocks", [])): block_sel,
         vol.Optional("weekend_blocks", default=d.get("weekend_blocks", [])): block_sel,

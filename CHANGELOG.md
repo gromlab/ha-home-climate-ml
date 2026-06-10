@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.4.10] — Optional entity selectors genuinely optional
+- **Bug**: `eva_in_entity`, `eva_out_entity`, and `occupancy_entity` in the zone config flow used `default=""` in the voluptuous schema — HA's EntitySelector interprets an empty-string default as a required field, forcing users to pick a sensor even when none is available
+- **Fix**: changed to `default=d.get("X") or vol.UNDEFINED` — `vol.UNDEFINED` tells voluptuous (and HA's frontend) the field has no default, making it genuinely skippable; the stored value remains `""` when omitted, which the integration already handles gracefully
+
 ## [0.4.9-fix] — Remove stale bare device association (final duplicate fix)
 - **Root cause identified by Opus review**: the device registry only ever unions subentry IDs onto the existing set — it never retracts old entries. Devices registered before v0.4.9 have a stale bare `(entry_id, None)` association alongside the correct `(entry_id, subentry_id)`, causing both the subentry listing and "Devices without a sub-entry" listing to show
 - **Fix**: after `async_forward_entry_setups` (which migrates entity registry entries from `config_subentry_id=None` to the real subentry ID), remove the bare device association via `async_update_device(remove_config_entry_id=..., remove_config_subentry_id=None)` — now safe because no entities remain on `None`, so the device-update listener cannot orphan them
