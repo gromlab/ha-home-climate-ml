@@ -1,6 +1,7 @@
 """Coordinator for ClimateML."""
 from __future__ import annotations
 
+import json
 from collections import deque
 from datetime import datetime, timedelta, timezone
 from typing import Any, TypedDict
@@ -10,7 +11,15 @@ from homeassistant.helpers.event import async_track_point_in_time
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 
-from .const import DOMAIN, EXTERNAL_SENSOR_MAX_C, EXTERNAL_SENSOR_MIN_C, LOGGER
+from .const import (
+    BAND_HYSTERESIS_DEFAULT,
+    COMFORT_LEVEL_DEFAULTS,
+    CONTROLLER_DEFAULTS,
+    DOMAIN,
+    EXTERNAL_SENSOR_MAX_C,
+    EXTERNAL_SENSOR_MIN_C,
+    LOGGER,
+)
 from .schedule import ScheduleBlock, get_block, get_current_block_detail, get_next_transition, parse_schedule_from_options
 from .store import ClimateDataStore
 
@@ -19,14 +28,17 @@ class ZoneData(TypedDict):
     ext_temp_c: float | None
     head_temp_c: float | None
     offset_c: float | None
-    target_setpoint_c: float
-    target_mode: str
-    corrected_setpoint_c: float | None
+    active_comfort_level: int
+    comfort_source: str          # "vacation" | "override" | "schedule" | "default"
+    band_min: float
+    band_max: float
+    commanded_setpoint: float | None
+    command_issued: bool
     override_active: bool
-    schedule_source: str
-    last_command_c: float | None
     error: str | None
     enabled: bool
+    ml_predicted_action: str | None
+    ml_confidence: float | None
 
 
 class HomeClimateMlCoordinator(DataUpdateCoordinator[dict[str, ZoneData]]):
@@ -56,11 +68,27 @@ class HomeClimateMlCoordinator(DataUpdateCoordinator[dict[str, ZoneData]]):
         self._controller_subentry_id = controller_subentry_id
         self.zone_subentry_map: dict[str, str] = zone_subentry_map or {}
 
-        setpoint_min = params["setpoint_min_c"]
-        setpoint_max = params["setpoint_max_c"]
         self._schedules: dict[str, dict[str, list[ScheduleBlock]]] = {
-            z["id"]: parse_schedule_from_options(z, setpoint_min, setpoint_max)
+            z["id"]: parse_schedule_from_options(z)
             for z in zones
+        }
+
+        # Comfort level definitions: {1: {name, min_c, max_c}, ...}
+        raw_levels = self._controller_config.get("comfort_levels") or COMFORT_LEVEL_DEFAULTS
+        self._comfort_levels: dict[int, dict] = {
+            int(cl["level"]): cl for cl in raw_levels
+        }
+
+        self._band_hysteresis: float = float(
+            self._controller_config.get("band_hysteresis_c", BAND_HYSTERESIS_DEFAULT)
+        )
+        self._vacation_comfort_level: int = int(
+            self._controller_config.get("vacation_comfort_level", 5)
+        )
+
+        # Zone default comfort level: seed from subentry data, overwritten by SELECT restore
+        self._zone_default_level: dict[str, int] = {
+            z["id"]: int(z.get("default_comfort_level", 3)) for z in zones
         }
 
         self._overrides: dict[str, dict] = {}
@@ -68,9 +96,21 @@ class HomeClimateMlCoordinator(DataUpdateCoordinator[dict[str, ZoneData]]):
         self._zone_enabled: dict[str, bool] = {z["id"]: True for z in zones}
         self._decision_log: dict[str, deque] = {z["id"]: deque(maxlen=30) for z in zones}
 
-        # Master enable: survives coordinator reload via hass.data; resets to OFF on HA restart
+        # dT/dt tracking: deque of (epoch_seconds, temp_c) tuples
+        self._zone_last_temps: dict[str, deque] = {z["id"]: deque(maxlen=3) for z in zones}
+
+        # ML shadow mode
+        self._ml_model: Any | None = None
+        self._zone_ml_confidence: dict[str, float] = {z["id"]: 0.0 for z in zones}
+
+        # Ensure hass.data[DOMAIN] exists before any reads — must precede master/vacation reads
         hass.data.setdefault(DOMAIN, {})
+
+        # Master/vacation: survive coordinator reload via hass.data; reset on cold HA restart
         self._master_enabled: bool = hass.data[DOMAIN].get(f"{entry_id}_master", False)
+        self._vacation_mode: bool = hass.data[DOMAIN].get(f"{entry_id}_vacation", False)
+
+    # ------------------------------------------------------------------ properties
 
     @property
     def zones(self) -> list[dict]:
@@ -84,17 +124,27 @@ class HomeClimateMlCoordinator(DataUpdateCoordinator[dict[str, ZoneData]]):
     def schedules(self) -> dict[str, dict[str, list[ScheduleBlock]]]:
         return self._schedules
 
+    @property
+    def comfort_levels(self) -> dict[int, dict]:
+        return self._comfort_levels
+
+    @property
+    def vacation_mode(self) -> bool:
+        return self._vacation_mode
+
+    # ------------------------------------------------------------------ decision log helpers
+
     def get_decision_log(self, zone_id: str) -> list[dict]:
-        """Return recent decisions for zone, newest first."""
         return list(reversed(list(self._decision_log.get(zone_id, []))))
 
     def get_current_block(self, zone_id: str) -> ScheduleBlock | None:
-        now = dt_util.now()
-        return get_current_block_detail(self._schedules, zone_id, now)
+        return get_current_block_detail(self._schedules, zone_id, dt_util.now())
 
     def get_next_transition(self, zone_id: str) -> datetime | None:
-        now = dt_util.now()
-        return get_next_transition(self._schedules, zone_id, now)
+        return get_next_transition(self._schedules, zone_id, dt_util.now())
+
+    def get_zone_ml_confidence(self, zone_id: str) -> float:
+        return self._zone_ml_confidence.get(zone_id, 0.0)
 
     # ------------------------------------------------------------------ master / zone enable
 
@@ -107,22 +157,65 @@ class HomeClimateMlCoordinator(DataUpdateCoordinator[dict[str, ZoneData]]):
         self._zone_enabled[zone_id] = enabled
         LOGGER.debug("Zone %s enabled=%s", zone_id, enabled)
 
+    def set_vacation_mode(self, active: bool) -> None:
+        self._vacation_mode = active
+        self.hass.data[DOMAIN][f"{self._entry_id}_vacation"] = active
+        LOGGER.info("Vacation mode=%s", active)
+
+    def is_zone_enabled(self, zone_id: str) -> bool:
+        return self._zone_enabled.get(zone_id, True)
+
+    def set_zone_default_level(self, zone_id: str, level: int) -> None:
+        self._zone_default_level[zone_id] = level
+        LOGGER.debug("Zone %s default comfort level set to %s", zone_id, level)
+
+    def set_ml_model(self, model: Any) -> None:
+        self._ml_model = model
+        LOGGER.info("ML model loaded: %s", type(model).__name__)
+
+    # ------------------------------------------------------------------ comfort level resolution
+
+    def _resolve_comfort_level(
+        self, zone_id: str, now: datetime
+    ) -> tuple[int, float, float, str]:
+        """Return (level, band_min, band_max, source) for zone at given time."""
+        if self._vacation_mode:
+            level = self._vacation_comfort_level
+            source = "vacation"
+        elif zone_id in self._overrides:
+            level = self._overrides[zone_id].get(
+                "comfort_level", self._zone_default_level.get(zone_id, 3)
+            )
+            source = "override"
+        else:
+            sched_level = get_block(self._schedules, zone_id, now)
+            if sched_level is not None:
+                level = sched_level
+                source = "schedule"
+            else:
+                level = self._zone_default_level.get(zone_id, 3)
+                source = "default"
+
+        band = self._comfort_levels.get(level, {})
+        band_min = float(band.get("min_c", 19.5))
+        band_max = float(band.get("max_c", 22.0))
+        return level, band_min, band_max, source
+
     # ------------------------------------------------------------------ overrides
 
-    def set_override(self, zone_id: str, setpoint_c: float | None, mode: str) -> None:
+    def set_override(self, zone_id: str, comfort_level: int) -> None:
         override_minutes = self.params.get("override_duration_minutes", 120)
         expires_at = dt_util.utcnow() + timedelta(minutes=override_minutes)
         self._cancel_override_timer(zone_id)
         self._overrides[zone_id] = {
-            "setpoint_c": setpoint_c,
-            "mode": mode,
+            "comfort_level": comfort_level,
             "expires_at": expires_at,
             "unsub": async_track_point_in_time(
                 self.hass, lambda _now, zid=zone_id: self._expire_override(zid), expires_at
             ),
         }
         self.hass.async_add_executor_job(
-            self._store.open_override, zone_id, setpoint_c, mode, expires_at
+            self._store.open_override, zone_id, comfort_level, expires_at
         )
 
     @callback
@@ -141,6 +234,12 @@ class HomeClimateMlCoordinator(DataUpdateCoordinator[dict[str, ZoneData]]):
         rows = await self.hass.async_add_executor_job(self._store.restore_active_overrides)
         now = dt_util.utcnow()
         for row in rows:
+            # Guard: pre-migration rows have no comfort_level — close them
+            if row.get("comfort_level") is None:
+                await self.hass.async_add_executor_job(
+                    self._store.close_override, row["zone_id"], "migrated"
+                )
+                continue
             expires_at = datetime.fromisoformat(row["expires_at"])
             if expires_at.tzinfo is None:
                 expires_at = expires_at.replace(tzinfo=timezone.utc)
@@ -151,8 +250,7 @@ class HomeClimateMlCoordinator(DataUpdateCoordinator[dict[str, ZoneData]]):
                 continue
             zone_id = row["zone_id"]
             self._overrides[zone_id] = {
-                "setpoint_c": row["setpoint_c"],
-                "mode": row["mode"],
+                "comfort_level": row["comfort_level"],
                 "expires_at": expires_at,
                 "unsub": async_track_point_in_time(
                     self.hass,
@@ -160,7 +258,10 @@ class HomeClimateMlCoordinator(DataUpdateCoordinator[dict[str, ZoneData]]):
                     expires_at,
                 ),
             }
-            LOGGER.debug("Restored override for zone %s, expires %s", zone_id, expires_at)
+            LOGGER.debug(
+                "Restored override for zone %s (level %s), expires %s",
+                zone_id, row["comfort_level"], expires_at,
+            )
 
     # ------------------------------------------------------------------ decision loop
 
@@ -169,7 +270,7 @@ class HomeClimateMlCoordinator(DataUpdateCoordinator[dict[str, ZoneData]]):
         results: dict[str, ZoneData] = {}
         all_failed = True
 
-        # --- Sensor guard: collect all valid zone temp readings + extra controller temps ---
+        # Sensor guard: collect all valid zone temp readings + extra controller temps
         zone_temps: dict[str, float] = {}
         for zone in self._zones:
             zone_id = zone["id"]
@@ -200,36 +301,48 @@ class HomeClimateMlCoordinator(DataUpdateCoordinator[dict[str, ZoneData]]):
         guard_avg = sum(all_temps) / len(all_temps) if all_temps else None
         guard_threshold = self.params.get("sensor_guard_threshold_c", 3.0)
 
-        # --- Per-zone decision loop ---
+        # Resolve comfort levels for all zones, then sort by level ascending (Goal 6)
+        resolved: list[tuple[dict, int, float, float, str]] = []
         for zone in self._zones:
+            level, band_min, band_max, source = self._resolve_comfort_level(zone["id"], now)
+            resolved.append((zone, level, band_min, band_max, source))
+        resolved.sort(key=lambda x: x[1])  # ascending: Level 1 (tightest) processed first
+
+        for zone, level, band_min, band_max, comfort_source in resolved:
             zone_id = zone["id"]
             try:
                 zone_data = await self._process_zone(
-                    zone_id, zone, now, guard_avg, guard_threshold, guard_active
+                    zone_id, zone, now,
+                    level, band_min, band_max, comfort_source,
+                    guard_avg, guard_threshold, guard_active,
                 )
                 results[zone_id] = zone_data
                 all_failed = False
                 self._decision_log[zone_id].append({
                     "time": now.isoformat(timespec="seconds"),
-                    "mode": zone_data["target_mode"],
-                    "scheduled_c": zone_data.get("target_setpoint_c"),
-                    "corrected_c": zone_data.get("corrected_setpoint_c"),
-                    "source": zone_data["schedule_source"],
-                    "ext_temp_c": zone_data.get("ext_temp_c"),
+                    "comfort_level": level,
+                    "comfort_source": comfort_source,
+                    "band_min": band_min,
+                    "band_max": band_max,
+                    "room_temp_c": zone_data.get("ext_temp_c"),
                     "offset_c": zone_data.get("offset_c"),
-                    "commanded": zone_data.get("last_command_c") is not None,
+                    "commanded_setpoint": zone_data.get("commanded_setpoint"),
+                    "command_issued": zone_data.get("command_issued"),
+                    "ml_action": zone_data.get("ml_predicted_action"),
+                    "ml_confidence": zone_data.get("ml_confidence"),
                 })
             except Exception as exc:  # noqa: BLE001
                 LOGGER.warning("Zone %s decision failed: %s", zone_id, exc)
                 results[zone_id] = ZoneData(
                     ext_temp_c=None, head_temp_c=None, offset_c=None,
-                    target_setpoint_c=self.params.get("default_setpoint_c", 21.0),
-                    target_mode="off", corrected_setpoint_c=None, override_active=False,
-                    schedule_source="error", last_command_c=None, error=str(exc),
-                    enabled=self._master_enabled and self._zone_enabled.get(zone_id, True),
+                    active_comfort_level=level, comfort_source=comfort_source,
+                    band_min=band_min, band_max=band_max,
+                    commanded_setpoint=None, command_issued=False,
+                    override_active=bool(self._overrides.get(zone_id)),
+                    error=str(exc), enabled=self._master_enabled and self._zone_enabled.get(zone_id, True),
+                    ml_predicted_action=None, ml_confidence=None,
                 )
 
-        # --- System-level data gathering (sun, ODU, weather) ---
         await self._gather_system_data(now)
 
         if all_failed and self._zones:
@@ -242,36 +355,44 @@ class HomeClimateMlCoordinator(DataUpdateCoordinator[dict[str, ZoneData]]):
         zone_id: str,
         zone: dict,
         now: datetime,
+        level: int,
+        band_min: float,
+        band_max: float,
+        comfort_source: str,
         guard_avg: float | None,
         guard_threshold: float,
         guard_active: bool,
     ) -> ZoneData:
-        if not (self._master_enabled and self._zone_enabled.get(zone_id, True)):
+        enabled = self._master_enabled and self._zone_enabled.get(zone_id, True)
+
+        if not enabled:
+            head_entity = zone["head_entity"]
+            await self.hass.services.async_call(
+                "climate", "turn_off", {"entity_id": head_entity}, blocking=True
+            )
             return ZoneData(
                 ext_temp_c=None, head_temp_c=None, offset_c=None,
-                target_setpoint_c=self.params.get("default_setpoint_c", 21.0),
-                target_mode="off", corrected_setpoint_c=None, override_active=False,
-                schedule_source="disabled", last_command_c=None, error=None,
-                enabled=False,
+                active_comfort_level=level, comfort_source=comfort_source,
+                band_min=band_min, band_max=band_max,
+                commanded_setpoint=None, command_issued=False,
+                override_active=bool(self._overrides.get(zone_id)),
+                error=None, enabled=False,
+                ml_predicted_action=None, ml_confidence=None,
             )
 
         head_entity = zone["head_entity"]
-        external_entity = zone["sensor_entity"]
-
-        ext_state = self.hass.states.get(external_entity)
         head_state = self.hass.states.get(head_entity)
+        ext_state = self.hass.states.get(zone["sensor_entity"])
 
         ext_temp_c: float | None = None
         head_temp_c: float | None = None
-        ext_valid = False
 
         if ext_state and ext_state.state not in ("unavailable", "unknown"):
             try:
                 val = float(ext_state.state)
                 if EXTERNAL_SENSOR_MIN_C <= val <= EXTERNAL_SENSOR_MAX_C:
                     ext_temp_c = val
-                    ext_valid = True
-                    await self._maybe_log_sensor(zone_id, "external", "temperature", val)
+                    await self._maybe_log_sensor(zone_id, "external", "temperature", value_numeric=val)
                 else:
                     LOGGER.warning("Zone %s external sensor out of range: %s°C", zone_id, val)
             except (ValueError, TypeError):
@@ -280,88 +401,92 @@ class HomeClimateMlCoordinator(DataUpdateCoordinator[dict[str, ZoneData]]):
         if head_state and head_state.state not in ("unavailable", "unknown"):
             try:
                 head_temp_c = float(head_state.attributes.get("current_temperature", "nan"))
-                await self._maybe_log_sensor(zone_id, "head", "temperature", head_temp_c)
+                await self._maybe_log_sensor(zone_id, "head", "temperature", value_numeric=head_temp_c)
             except (ValueError, TypeError):
                 head_temp_c = None
 
-        # Log EVA in/out if configured
+        # Log EVA in/out
         for eva_key, eva_label in (("eva_in_entity", "eva_in"), ("eva_out_entity", "eva_out")):
-            eva_entity = zone.get(eva_key, "")
-            if eva_entity:
-                eva_state = self.hass.states.get(eva_entity)
-                if eva_state and eva_state.state not in ("unavailable", "unknown"):
+            entity_id = zone.get(eva_key, "")
+            if entity_id:
+                state = self.hass.states.get(entity_id)
+                if state and state.state not in ("unavailable", "unknown"):
                     try:
-                        await self._maybe_log_sensor(zone_id, eva_label, "temperature", float(eva_state.state))
+                        await self._maybe_log_sensor(zone_id, eva_label, "temperature", value_numeric=float(state.state))
                     except (ValueError, TypeError):
                         pass
 
-        # Log occupancy if configured (binary: 1 = occupied, 0 = unoccupied)
-        occupancy_entity = zone.get("occupancy_entity", "")
-        if occupancy_entity:
-            occ_state = self.hass.states.get(occupancy_entity)
-            if occ_state and occ_state.state not in ("unavailable", "unknown"):
-                await self._maybe_log_sensor(zone_id, "occupancy", "presence", 1.0 if occ_state.state == "on" else 0.0)
-
-        default_setpoint = self.params.get("default_setpoint_c", 21.0)
-        override = self._overrides.get(zone_id)
-        if override:
-            target_mode = override["mode"]
-            target_setpoint_c = override["setpoint_c"] or default_setpoint
-            schedule_source = "override"
-        else:
-            sched_mode, sched_setpoint = get_block(self._schedules, zone_id, now)
-            target_mode = sched_mode
-            target_setpoint_c = sched_setpoint or default_setpoint
-            schedule_source = "schedule"
-
-        setpoint_min = self.params.get("setpoint_min_c", 16.0)
-        setpoint_max = self.params.get("setpoint_max_c", 28.0)
-        tolerance = self.params.get("setpoint_tolerance_c", 0.5)
-
-        command_issued = False
-        corrected_setpoint_c: float | None = None
-        offset_c: float | None = None
-
-        if target_mode == "off":
-            await self.hass.services.async_call(
-                "climate", "turn_off", {"entity_id": head_entity}, blocking=True
-            )
-            command_issued = True
-        else:
-            if ext_valid and ext_temp_c is not None and head_temp_c is not None:
-                raw_offset = head_temp_c - ext_temp_c
-                # Sensor guard: if this zone's sensor deviates too far from the peer average,
-                # treat the reading as suspect and apply zero offset.
-                if (
-                    guard_active
-                    and guard_avg is not None
-                    and abs(ext_temp_c - guard_avg) > guard_threshold
-                ):
-                    LOGGER.warning(
-                        "Zone %s sensor guard triggered: %.1f°C vs peer avg %.1f°C (threshold %.1f°C) — offset zeroed",
-                        zone_id, ext_temp_c, guard_avg, guard_threshold,
+        # Log occupancy, door, window (binary: 1.0 = active/open, 0.0 = inactive/closed)
+        for entity_key, log_source in (
+            ("occupancy_entity", "occupancy"),
+            ("door_entity", "door"),
+            ("window_entity", "window"),
+        ):
+            entity_id = zone.get(entity_key, "")
+            if entity_id:
+                state = self.hass.states.get(entity_id)
+                if state and state.state not in ("unavailable", "unknown"):
+                    await self._maybe_log_sensor(
+                        zone_id, log_source, "presence",
+                        value_numeric=1.0 if state.state == "on" else 0.0,
                     )
-                    offset_c = 0.0
-                else:
-                    offset_c = raw_offset
-            else:
+
+        # dT/dt tracking
+        if ext_temp_c is not None:
+            epoch = now.timestamp()
+            dq = self._zone_last_temps[zone_id]
+            dq.appendleft((epoch, ext_temp_c))
+            if len(dq) >= 2:
+                dt_min = (dq[0][0] - dq[1][0]) / 60.0
+                if dt_min > 0:
+                    dT_dt_5min = (dq[0][1] - dq[1][1]) / dt_min
+                    await self._maybe_log_sensor(zone_id, "derived", "dT_dt_5min", value_numeric=round(dT_dt_5min, 4))
+            if len(dq) >= 3:
+                dt_min = (dq[0][0] - dq[2][0]) / 60.0
+                if dt_min > 0:
+                    dT_dt_15min = (dq[0][1] - dq[2][1]) / dt_min
+                    await self._maybe_log_sensor(zone_id, "derived", "dT_dt_15min", value_numeric=round(dT_dt_15min, 4))
+
+        # Compute head offset (head internal sensor - room sensor)
+        offset_c: float = 0.0
+        if ext_temp_c is not None and head_temp_c is not None:
+            raw_offset = head_temp_c - ext_temp_c
+            if (
+                guard_active
+                and guard_avg is not None
+                and abs(ext_temp_c - guard_avg) > guard_threshold
+            ):
+                LOGGER.warning(
+                    "Zone %s sensor guard triggered: %.1f°C vs peer avg %.1f°C (threshold %.1f°C) — offset zeroed",
+                    zone_id, ext_temp_c, guard_avg, guard_threshold,
+                )
                 offset_c = 0.0
+            else:
+                offset_c = raw_offset
 
-            corrected_setpoint_c = max(setpoint_min, min(setpoint_max, target_setpoint_c + offset_c))
+        setpoint_min = float(self._controller_config.get("setpoint_min_c", CONTROLLER_DEFAULTS["setpoint_min_c"]))
+        setpoint_max = float(self._controller_config.get("setpoint_max_c", CONTROLLER_DEFAULTS["setpoint_max_c"]))
+        tolerance = float(self.params.get("setpoint_tolerance_c", 0.5))
 
-            current_head_setpoint: float | None = None
-            if head_state:
-                try:
-                    current_head_setpoint = float(head_state.attributes.get("temperature", "nan"))
-                except (ValueError, TypeError):
-                    current_head_setpoint = None
+        # Current head setpoint (for tolerance gate)
+        current_head_setpoint: float | None = None
+        if head_state and head_state.state not in ("unavailable", "unknown"):
+            try:
+                current_head_setpoint = float(head_state.attributes.get("temperature", "nan"))
+            except (ValueError, TypeError):
+                pass
 
-            should_command = (
-                current_head_setpoint is None
-                or abs(corrected_setpoint_c - current_head_setpoint) >= tolerance
-            )
+        commanded_setpoint: float | None = None
+        command_issued = False
 
-            if should_command:
+        if ext_temp_c is None:
+            # Sensor unavailable — suppress; do not act on stale data
+            pass
+        elif ext_temp_c > band_max + self._band_hysteresis:
+            # Room too warm — cool towards band_max
+            target_sp = max(setpoint_min, min(setpoint_max, band_max + offset_c))
+            commanded_setpoint = target_sp
+            if current_head_setpoint is None or abs(target_sp - current_head_setpoint) >= tolerance:
                 if head_state and head_state.state != "cool":
                     await self.hass.services.async_call(
                         "climate", "set_hvac_mode",
@@ -369,72 +494,124 @@ class HomeClimateMlCoordinator(DataUpdateCoordinator[dict[str, ZoneData]]):
                     )
                 await self.hass.services.async_call(
                     "climate", "set_temperature",
-                    {"entity_id": head_entity, "temperature": corrected_setpoint_c}, blocking=True,
+                    {"entity_id": head_entity, "temperature": target_sp}, blocking=True,
                 )
                 command_issued = True
+        elif ext_temp_c < band_min:
+            # Room too cold — suppress; Samsung's internal hysteresis already stops
+            # the compressor when room drops below setpoint − ~1°C, so there is no
+            # demand to reduce.  Forcing cool mode here would run the compressor on
+            # a cold room.  Leave the head in its current state and let it warm naturally.
+            pass
+        # else: room in band — suppress
+
+        # ML shadow prediction (non-blocking; never affects commands)
+        ml_result = await self._ml_predict(zone_id, {
+            "ext_temp_c": ext_temp_c,
+            "band_min": band_min,
+            "band_max": band_max,
+            "offset_c": offset_c,
+            "comfort_level": level,
+        })
+        ml_action = ml_result.get("action") if ml_result else None
+        ml_confidence = ml_result.get("confidence") if ml_result else None
+        self._zone_ml_confidence[zone_id] = ml_confidence or 0.0
 
         decision_id = await self.hass.async_add_executor_job(
             self._store.log_decision,
-            zone_id, schedule_source, target_mode, target_setpoint_c,
-            ext_temp_c, head_temp_c, offset_c, corrected_setpoint_c, command_issued,
+            zone_id, comfort_source, "cool" if commanded_setpoint is not None else "suppress",
+            commanded_setpoint, ext_temp_c, head_temp_c, offset_c, commanded_setpoint, command_issued,
+            None,  # notes
+            level, band_min, band_max, ml_action, ml_confidence,
         )
-        if command_issued:
-            payload = f"mode={target_mode},setpoint={corrected_setpoint_c}"
+        if command_issued and commanded_setpoint is not None:
             await self.hass.async_add_executor_job(
                 self._store.log_device_command,
-                zone_id, "set_temperature" if target_mode != "off" else "turn_off",
-                payload, decision_id,
+                zone_id, "set_temperature", f"setpoint={commanded_setpoint}", decision_id,
             )
 
         return ZoneData(
-            ext_temp_c=ext_temp_c, head_temp_c=head_temp_c, offset_c=offset_c,
-            target_setpoint_c=target_setpoint_c, target_mode=target_mode,
-            corrected_setpoint_c=corrected_setpoint_c, override_active=bool(override),
-            schedule_source=schedule_source,
-            last_command_c=corrected_setpoint_c if command_issued else None,
-            error=None, enabled=True,
+            ext_temp_c=ext_temp_c,
+            head_temp_c=head_temp_c,
+            offset_c=offset_c if (ext_temp_c is not None and head_temp_c is not None) else None,
+            active_comfort_level=level,
+            comfort_source=comfort_source,
+            band_min=band_min,
+            band_max=band_max,
+            commanded_setpoint=commanded_setpoint,
+            command_issued=command_issued,
+            override_active=bool(self._overrides.get(zone_id)),
+            error=None,
+            enabled=True,
+            ml_predicted_action=ml_action,
+            ml_confidence=ml_confidence,
         )
 
+    # ------------------------------------------------------------------ ML shadow
+
+    async def _ml_predict(self, zone_id: str, zone_state: dict) -> dict | None:
+        """Run ML shadow prediction. Returns {action, confidence} or None if no model."""
+        if self._ml_model is None:
+            return None
+        try:
+            features = [
+                zone_state.get("ext_temp_c") or 0.0,
+                zone_state.get("band_min") or 0.0,
+                zone_state.get("band_max") or 0.0,
+                zone_state.get("offset_c") or 0.0,
+                float(zone_state.get("comfort_level") or 3),
+            ]
+            prediction = await self.hass.async_add_executor_job(
+                self._ml_model.predict, [features]
+            )
+            confidence = 0.0
+            if hasattr(self._ml_model, "predict_proba"):
+                proba = await self.hass.async_add_executor_job(
+                    self._ml_model.predict_proba, [features]
+                )
+                confidence = float(max(proba[0]))
+            return {"action": str(prediction[0]), "confidence": confidence}
+        except Exception as exc:  # noqa: BLE001
+            LOGGER.debug("ML predict error for zone %s: %s", zone_id, exc)
+            return None
+
+    # ------------------------------------------------------------------ system data
+
     async def _gather_system_data(self, now: datetime) -> None:
-        """Log sun, ODU, outdoor temp, and weather data for future ML."""
-        # Sun is always available
+        """Log sun, ODU, outdoor temp, power, and weather data for ML training."""
         sun_state = self.hass.states.get("sun.sun")
         if sun_state:
             elev = sun_state.attributes.get("elevation")
             azim = sun_state.attributes.get("azimuth")
             if elev is not None:
-                await self._maybe_log_sensor("_system", "sun", "elevation", float(elev))
+                await self._maybe_log_sensor("_system", "sun", "elevation", value_numeric=float(elev))
             if azim is not None:
-                await self._maybe_log_sensor("_system", "sun", "azimuth", float(azim))
+                await self._maybe_log_sensor("_system", "sun", "azimuth", value_numeric=float(azim))
 
-        # ODU mode
         odu_entity = self._controller_config.get("odu_mode_entity", "")
         if odu_entity:
             odu_state = self.hass.states.get(odu_entity)
             if odu_state and odu_state.state not in ("unavailable", "unknown"):
-                await self._maybe_log_sensor("_system", "odu", "mode", 0)  # state is string, just trigger log
+                await self._maybe_log_sensor("_system", "odu", "mode", value_text=odu_state.state)
 
-        # Outdoor temp from controller
         outdoor_entity = self._controller_config.get("outdoor_temp_entity", "")
         if outdoor_entity:
             state = self.hass.states.get(outdoor_entity)
             if state and state.state not in ("unavailable", "unknown"):
                 try:
-                    await self._maybe_log_sensor("_system", "outdoor", "temperature", float(state.state))
+                    await self._maybe_log_sensor("_system", "outdoor", "temperature", value_numeric=float(state.state))
                 except (ValueError, TypeError):
                     pass
 
-        # Power
         power_entity = self._controller_config.get("power_entity", "")
         if power_entity:
             state = self.hass.states.get(power_entity)
             if state and state.state not in ("unavailable", "unknown"):
                 try:
-                    await self._maybe_log_sensor("_system", "hvac", "power_w", float(state.state))
+                    await self._maybe_log_sensor("_system", "hvac", "power_w", value_numeric=float(state.state))
                 except (ValueError, TypeError):
                     pass
 
-        # Weather forecast (stored in memory for future ML, not exposed as entity state yet)
         weather_entity = self._controller_config.get("weather_entity", "")
         if weather_entity:
             try:
@@ -447,17 +624,25 @@ class HomeClimateMlCoordinator(DataUpdateCoordinator[dict[str, ZoneData]]):
                 if isinstance(response, dict):
                     forecast = response.get(weather_entity, {}).get("forecast", [])[:12]
                     if forecast:
-                        LOGGER.debug("Weather forecast fetched: %d hourly entries", len(forecast))
+                        forecast_json = json.dumps(forecast, default=str)
+                        await self.hass.async_add_executor_job(
+                            self._store.log_weather_forecast, forecast_json
+                        )
             except Exception as exc:  # noqa: BLE001
                 LOGGER.debug("Weather forecast unavailable: %s", exc)
 
-    async def _maybe_log_sensor(self, zone_id: str, source: str, metric: str, value: float) -> None:
+    async def _maybe_log_sensor(
+        self,
+        zone_id: str,
+        source: str,
+        metric: str,
+        value_numeric: float | None = None,
+        value_text: str | None = None,
+    ) -> None:
+        cache_val: Any = value_numeric if value_numeric is not None else value_text
         key = f"{zone_id}:{source}:{metric}"
-        prev = self._last_sensor_values.get(key)
-        if prev != value:
-            self._last_sensor_values[key] = value
-            if zone_id != "_system":
-                await self.hass.async_add_executor_job(
-                    self._store.log_sensor_event, zone_id, source, metric, value, None
-                )
-
+        if self._last_sensor_values.get(key) != cache_val:
+            self._last_sensor_values[key] = cache_val
+            await self.hass.async_add_executor_job(
+                self._store.log_sensor_event, zone_id, source, metric, value_numeric, value_text
+            )

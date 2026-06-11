@@ -10,8 +10,15 @@ from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.event import async_track_time_change
 
 from .const import (
-    CONTROLLER_DEFAULTS, DEFAULT_OPTIONS, DOMAIN, LOGGER,
-    _REMOVED_OPTIONS, _V5_REMOVED_OPTIONS,
+    BAND_HYSTERESIS_DEFAULT,
+    COMFORT_LEVEL_DEFAULTS,
+    CONTROLLER_DEFAULTS,
+    DEFAULT_OPTIONS,
+    DOMAIN,
+    LOGGER,
+    ML_MODEL_FILENAME,
+    _REMOVED_OPTIONS,
+    _V5_REMOVED_OPTIONS,
 )
 from .coordinator import HomeClimateMlCoordinator
 from .store import ClimateDataStore
@@ -20,7 +27,13 @@ if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
     from homeassistant.config_entries import ConfigEntry
 
-PLATFORMS: list[Platform] = [Platform.CLIMATE, Platform.NUMBER, Platform.SENSOR, Platform.SWITCH]
+PLATFORMS: list[Platform] = [
+    Platform.CLIMATE,
+    Platform.NUMBER,
+    Platform.SELECT,
+    Platform.SENSOR,
+    Platform.SWITCH,
+]
 
 type ClimateMLConfigEntry = ConfigEntry
 
@@ -31,7 +44,6 @@ async def async_setup_entry(
     hass: HomeAssistant,
     entry: ClimateMLConfigEntry,
 ) -> bool:
-    # Zones come from zone subentries; controller config from controller subentry.
     zone_subentry_map: dict[str, str] = {}
     zones = []
     controller_subentry_id: str | None = None
@@ -45,9 +57,13 @@ async def async_setup_entry(
                 "name": s.title,
                 "head_entity": s.data.get("head_entity", ""),
                 "sensor_entity": s.data.get("sensor_entity", ""),
+                "default_comfort_level": s.data.get("default_comfort_level", 3),
                 "eva_in_entity": s.data.get("eva_in_entity", ""),
                 "eva_out_entity": s.data.get("eva_out_entity", ""),
                 "occupancy_entity": s.data.get("occupancy_entity", ""),
+                "humidity_entity": s.data.get("humidity_entity", ""),
+                "door_entity": s.data.get("door_entity", ""),
+                "window_entity": s.data.get("window_entity", ""),
                 "schedule": s.data.get("schedule", {"weekday": [], "weekend": []}),
             })
             zone_subentry_map[zone_id] = s.subentry_id
@@ -55,7 +71,7 @@ async def async_setup_entry(
             controller_subentry_id = s.subentry_id
             controller_config = dict(s.data)
 
-    # Sync device registry
+    # Sync device registry — remove stale zone devices
     dreg = dr.async_get(hass)
     current_zone_ids = {z["id"] for z in zones}
     protected_identifiers = {_CONTROLLER_IDENTIFIER}
@@ -70,7 +86,7 @@ async def async_setup_entry(
                 dreg.async_remove_device(device.id)
                 break
 
-    # Controller device — created before async_forward_entry_setups so NUMBER entities can reference it
+    # Controller device created before entity setup so NUMBER/SWITCH/SENSOR entities can reference it
     if controller_subentry_id is not None:
         dreg.async_get_or_create(
             config_entry_id=entry.entry_id,
@@ -91,9 +107,7 @@ async def async_setup_entry(
             model="Zone Controller",
         )
 
-    # Build coordinator params:
-    # - update_interval, setpoint bounds: from controller_config (with fallback to CONTROLLER_DEFAULTS)
-    # - tuning values: from DEFAULT_OPTIONS (overridden in-place by NUMBER RestoreEntity after setup)
+    # params: tuning values from NUMBER RestoreEntities (overwritten in-place after setup)
     params = {
         **{k: controller_config.get(k, v) for k, v in CONTROLLER_DEFAULTS.items()},
         **DEFAULT_OPTIONS,
@@ -119,26 +133,13 @@ async def async_setup_entry(
     await coordinator.async_config_entry_first_refresh()
     await coordinator.restore_overrides()
 
+    # Attempt to load ML model — logs warning on failure, never blocks setup
+    await _async_load_ml_model(hass, coordinator)
+
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     entry.async_on_unload(entry.add_update_listener(async_reload_entry))
 
-    # De-duplicate device sub-entry associations.
-    #
-    # Earlier versions (and any entity added before v0.4.9 carried the entry's
-    # devices into the registry with a *bare* association — config_subentry_id
-    # = None. v0.4.9 registers entities under their real sub-entry, but the
-    # additive logic in device_registry._async_update_device only ever UNIONS
-    # sub-entry ids onto the existing set; it never retracts the stale None.
-    # The device therefore ends up with {None, <real_subentry_id>} and shows up
-    # both under its sub-entry AND under "Devices without a sub-entry".
-    #
-    # async_forward_entry_setups has already run, so entity_registry has migrated
-    # every entity from config_subentry_id=None to its real sub-entry (see
-    # entity_registry._async_update_entity). It is now safe to drop the bare
-    # device association: the registry's device-update listener only removes
-    # entities whose config_subentry_id is still in the removed set, and none
-    # remain on None. Removing None leaves {<real_subentry_id>}, so the device
-    # is retained (it is not deleted unless its association set becomes empty).
+    # Remove stale bare (no-subentry) device associations created by older entity registration
     dreg_post = dr.async_get(hass)
     for device in dr.async_entries_for_config_entry(dreg_post, entry.entry_id):
         subentries = device.config_entries_subentries.get(entry.entry_id, set())
@@ -157,6 +158,33 @@ async def async_setup_entry(
     )
 
     return True
+
+
+async def _async_load_ml_model(
+    hass: HomeAssistant, coordinator: HomeClimateMlCoordinator
+) -> None:
+    """Load ML model from /config/climate_ml/model.pkl — logs warning on failure, never raises."""
+    import os
+    model_path = hass.config.path("climate_ml", ML_MODEL_FILENAME)
+
+    def _load():
+        if not os.path.exists(model_path):
+            return None
+        import joblib  # noqa: PLC0415
+        return joblib.load(model_path)
+
+    try:
+        model = await hass.async_add_executor_job(_load)
+        if model is None:
+            return
+        if not callable(getattr(model, "predict", None)):
+            LOGGER.warning(
+                "ML model at %s has no .predict() method — shadow mode disabled", model_path
+            )
+            return
+        coordinator.set_ml_model(model)
+    except Exception as exc:  # noqa: BLE001
+        LOGGER.warning("ML model load failed (%s) — shadow mode disabled", exc)
 
 
 async def async_unload_entry(
@@ -234,11 +262,63 @@ async def async_migrate_entry(
         LOGGER.info("Migration to v4 complete")
 
     if entry.version == 4:
-        # v4→v5: strip options now managed by controller subentry or NUMBER entities.
-        # The values remain accessible via CONTROLLER_DEFAULTS fallback in async_setup_entry
-        # until the user reconfigures the controller subentry explicitly.
         new_options = {k: v for k, v in entry.options.items() if k not in _V5_REMOVED_OPTIONS}
         hass.config_entries.async_update_entry(entry, options=new_options, version=5)
         LOGGER.info("Migration to v5 complete (options consolidated to controller subentry)")
+
+    if entry.version == 5:
+        from homeassistant.helpers import entity_registry as er
+
+        # Update zone subentries: strip mode/setpoint_c from blocks, add comfort_level
+        for subentry in list(entry.subentries.values()):
+            if subentry.subentry_type != "zone":
+                continue
+            new_schedule: dict = {"weekday": [], "weekend": []}
+            for day in ("weekday", "weekend"):
+                for block in subentry.data.get("schedule", {}).get(day, []):
+                    new_schedule[day].append({
+                        "start": block.get("start", "00:00"),
+                        "end": block.get("end", "00:00"),
+                        "comfort_level": 3,  # default Relaxed
+                    })
+            new_data = {
+                **dict(subentry.data),
+                "schedule": new_schedule,
+                "default_comfort_level": 3,
+                "humidity_entity": subentry.data.get("humidity_entity", ""),
+                "door_entity": subentry.data.get("door_entity", ""),
+                "window_entity": subentry.data.get("window_entity", ""),
+            }
+            hass.config_entries.async_update_subentry(
+                entry, subentry, data=MappingProxyType(new_data)
+            )
+
+        # Update controller subentry: add comfort levels and new settings
+        for subentry in list(entry.subentries.values()):
+            if subentry.subentry_type != "controller":
+                continue
+            new_data = {
+                **dict(subentry.data),
+                "comfort_levels": COMFORT_LEVEL_DEFAULTS,
+                "vacation_comfort_level": 5,
+                "band_hysteresis_c": BAND_HYSTERESIS_DEFAULT,
+            }
+            hass.config_entries.async_update_subentry(
+                entry, subentry, data=MappingProxyType(new_data)
+            )
+
+        # Remove zone enabled switch entities (replaced by climate entity AUTO/OFF)
+        ereg = er.async_get(hass)
+        for entity_entry in er.async_entries_for_config_entry(ereg, entry.entry_id):
+            if (
+                entity_entry.domain == "switch"
+                and entity_entry.unique_id
+                and entity_entry.unique_id.endswith("_enabled")
+                and entity_entry.unique_id != f"{DOMAIN}_master_enabled"
+            ):
+                ereg.async_remove(entity_entry.entity_id)
+
+        hass.config_entries.async_update_entry(entry, version=6)
+        LOGGER.info("Migration to v6 complete")
 
     return True

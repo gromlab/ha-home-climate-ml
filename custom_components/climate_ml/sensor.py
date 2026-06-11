@@ -1,4 +1,4 @@
-"""Sensor platform for ClimateML — per-zone diagnostic sensors."""
+"""Sensor platform for ClimateML — per-zone and controller diagnostic sensors."""
 from __future__ import annotations
 
 from datetime import datetime
@@ -13,12 +13,14 @@ from homeassistant.const import EntityCategory, UnitOfTemperature
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.event import async_track_time_change
+from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
 from .coordinator import HomeClimateMlCoordinator
 
-_SENSORS = [
+_ZONE_SENSORS = [
     {
         "key": "ext_temp_c",
         "name_suffix": "Room Temperature",
@@ -34,9 +36,9 @@ _SENSORS = [
         "state_class": SensorStateClass.MEASUREMENT,
     },
     {
-        "key": "corrected_setpoint_c",
-        "name_suffix": "Corrected Setpoint",
-        "unique_suffix": "corrected_setpoint",
+        "key": "commanded_setpoint",
+        "name_suffix": "Commanded Setpoint",
+        "unique_suffix": "commanded_setpoint",
         "entity_category": EntityCategory.DIAGNOSTIC,
         "state_class": SensorStateClass.MEASUREMENT,
     },
@@ -49,9 +51,22 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     coordinator: HomeClimateMlCoordinator = entry.runtime_data
+
+    # Controller entities
+    async_add_entities(
+        [ClimateMLEnergyTodaySensor(coordinator)],
+        config_subentry_id=coordinator.controller_subentry_id,
+    )
+
+    # Per-zone entities
     for zone in coordinator.zones:
-        entities = [ClimateMLZoneSensor(coordinator, zone, s) for s in _SENSORS]
+        entities: list[SensorEntity] = [
+            ClimateMLZoneSensor(coordinator, zone, s) for s in _ZONE_SENSORS
+        ]
         entities += [
+            ClimateMLZoneComfortMinSensor(coordinator, zone),
+            ClimateMLZoneComfortMaxSensor(coordinator, zone),
+            ClimateMLZoneMLConfidenceSensor(coordinator, zone),
             ClimateMLZoneDecisionLog(coordinator, zone),
             ClimateMLZoneCurrentBlock(coordinator, zone),
             ClimateMLZoneNextTransition(coordinator, zone),
@@ -62,7 +77,7 @@ async def async_setup_entry(
         )
 
 
-def _device_info(zone: dict) -> DeviceInfo:
+def _zone_device(zone: dict) -> DeviceInfo:
     return DeviceInfo(
         identifiers={(DOMAIN, zone["id"])},
         name=f"ClimateML — {zone['name']}",
@@ -70,6 +85,88 @@ def _device_info(zone: dict) -> DeviceInfo:
         model="Zone Controller",
     )
 
+
+_CONTROLLER_DEVICE = DeviceInfo(
+    identifiers={(DOMAIN, "controller")},
+    name="ClimateML Controller",
+    manufacturer="ClimateML",
+    model="System Controller",
+)
+
+
+# ---------------------------------------------------------------------------
+# Controller sensors
+# ---------------------------------------------------------------------------
+
+class ClimateMLEnergyTodaySensor(
+    CoordinatorEntity[HomeClimateMlCoordinator], RestoreEntity, SensorEntity
+):
+    """kWh consumed today — odometer minus midnight snapshot."""
+
+    _attr_should_poll = False
+    _attr_name = "Energy Today"
+    _attr_device_class = SensorDeviceClass.ENERGY
+    _attr_state_class = SensorStateClass.TOTAL_INCREASING
+    _attr_native_unit_of_measurement = "kWh"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator: HomeClimateMlCoordinator) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{DOMAIN}_controller_energy_today"
+        self._attr_device_info = _CONTROLLER_DEVICE
+        self._midnight_snapshot: float | None = None
+        self._snapshot_date: str | None = None
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        if (last := await self.async_get_last_state()) is not None:
+            attrs = last.attributes
+            self._midnight_snapshot = attrs.get("midnight_snapshot")
+            self._snapshot_date = attrs.get("snapshot_date")
+        unsub = async_track_time_change(
+            self.hass, self._midnight_callback, hour=0, minute=0, second=5
+        )
+        self.async_on_remove(unsub)
+
+    async def _midnight_callback(self, now: datetime) -> None:
+        odometer = self._read_odometer()
+        if odometer is not None:
+            self._midnight_snapshot = odometer
+            self._snapshot_date = now.date().isoformat()
+        self.async_write_ha_state()
+
+    def _read_odometer(self) -> float | None:
+        entity_id = self.coordinator._controller_config.get("energy_entity", "")
+        if not entity_id:
+            return None
+        state = self.hass.states.get(entity_id)
+        if state and state.state not in ("unavailable", "unknown"):
+            try:
+                return float(state.state)
+            except (ValueError, TypeError):
+                pass
+        return None
+
+    @property
+    def native_value(self) -> float | None:
+        odometer = self._read_odometer()
+        if odometer is None:
+            return None
+        if self._midnight_snapshot is None:
+            return None
+        return round(max(0.0, odometer - self._midnight_snapshot), 3)
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        return {
+            "midnight_snapshot": self._midnight_snapshot,
+            "snapshot_date": self._snapshot_date,
+        }
+
+
+# ---------------------------------------------------------------------------
+# Per-zone sensors
+# ---------------------------------------------------------------------------
 
 class ClimateMLZoneSensor(CoordinatorEntity[HomeClimateMlCoordinator], SensorEntity):
     _attr_device_class = SensorDeviceClass.TEMPERATURE
@@ -90,7 +187,7 @@ class ClimateMLZoneSensor(CoordinatorEntity[HomeClimateMlCoordinator], SensorEnt
         self._attr_state_class = sensor_def["state_class"]
         if sensor_def["entity_category"]:
             self._attr_entity_category = sensor_def["entity_category"]
-        self._attr_device_info = _device_info(zone)
+        self._attr_device_info = _zone_device(zone)
 
     @property
     def native_value(self) -> float | None:
@@ -111,6 +208,72 @@ class ClimateMLZoneSensor(CoordinatorEntity[HomeClimateMlCoordinator], SensorEnt
         return True
 
 
+class ClimateMLZoneComfortMinSensor(CoordinatorEntity[HomeClimateMlCoordinator], SensorEntity):
+    _attr_device_class = SensorDeviceClass.TEMPERATURE
+    _attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_should_poll = False
+
+    def __init__(self, coordinator: HomeClimateMlCoordinator, zone: dict) -> None:
+        super().__init__(coordinator)
+        self._zone_id = zone["id"]
+        self._attr_name = f"ML — {zone['name']} Comfort Min"
+        self._attr_unique_id = f"{DOMAIN}_{self._zone_id}_comfort_min"
+        self._attr_entity_category = EntityCategory.DIAGNOSTIC
+        self._attr_device_info = _zone_device(zone)
+
+    @property
+    def native_value(self) -> float | None:
+        if self.coordinator.data:
+            zone_data = self.coordinator.data.get(self._zone_id)
+            if zone_data:
+                return zone_data.get("band_min")
+        return None
+
+
+class ClimateMLZoneComfortMaxSensor(CoordinatorEntity[HomeClimateMlCoordinator], SensorEntity):
+    _attr_device_class = SensorDeviceClass.TEMPERATURE
+    _attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_should_poll = False
+
+    def __init__(self, coordinator: HomeClimateMlCoordinator, zone: dict) -> None:
+        super().__init__(coordinator)
+        self._zone_id = zone["id"]
+        self._attr_name = f"ML — {zone['name']} Comfort Max"
+        self._attr_unique_id = f"{DOMAIN}_{self._zone_id}_comfort_max"
+        self._attr_entity_category = EntityCategory.DIAGNOSTIC
+        self._attr_device_info = _zone_device(zone)
+
+    @property
+    def native_value(self) -> float | None:
+        if self.coordinator.data:
+            zone_data = self.coordinator.data.get(self._zone_id)
+            if zone_data:
+                return zone_data.get("band_max")
+        return None
+
+
+class ClimateMLZoneMLConfidenceSensor(CoordinatorEntity[HomeClimateMlCoordinator], SensorEntity):
+    """ML shadow prediction confidence — 0.0 when no model loaded."""
+
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_should_poll = False
+    _attr_icon = "mdi:robot"
+
+    def __init__(self, coordinator: HomeClimateMlCoordinator, zone: dict) -> None:
+        super().__init__(coordinator)
+        self._zone_id = zone["id"]
+        self._attr_name = f"ML — {zone['name']} ML Confidence"
+        self._attr_unique_id = f"{DOMAIN}_{self._zone_id}_ml_confidence"
+        self._attr_entity_category = EntityCategory.DIAGNOSTIC
+        self._attr_device_info = _zone_device(zone)
+
+    @property
+    def native_value(self) -> float:
+        return self.coordinator.get_zone_ml_confidence(self._zone_id)
+
+
 class ClimateMLZoneDecisionLog(CoordinatorEntity[HomeClimateMlCoordinator], SensorEntity):
     """Rolling log of the last 30 decisions for a zone, newest first."""
 
@@ -122,7 +285,7 @@ class ClimateMLZoneDecisionLog(CoordinatorEntity[HomeClimateMlCoordinator], Sens
         self._zone_id = zone["id"]
         self._attr_name = f"ML — {zone['name']} Decision Log"
         self._attr_unique_id = f"{DOMAIN}_{self._zone_id}_decision_log"
-        self._attr_device_info = _device_info(zone)
+        self._attr_device_info = _zone_device(zone)
 
     @property
     def native_value(self) -> str | None:
@@ -130,29 +293,14 @@ class ClimateMLZoneDecisionLog(CoordinatorEntity[HomeClimateMlCoordinator], Sens
         if not log:
             return None
         last = log[0]
-        mode = last.get("mode", "off")
-        source = last.get("source", "")
-        commanded = last.get("commanded", False)
-
-        if mode == "off":
-            return f"off [{source}]"
-
-        scheduled_c = last.get("scheduled_c")
-        corrected_c = last.get("corrected_c")
-        offset_c = last.get("offset_c")
-
-        suffix = " ✓" if commanded else " held"
-
-        if offset_c is not None and abs(offset_c) >= 0.05 and corrected_c is not None and scheduled_c is not None:
-            sign = "+" if offset_c >= 0 else ""
-            return (
-                f"{mode}: {scheduled_c:.1f}°C → {corrected_c:.1f}°C "
-                f"({sign}{offset_c:.1f}°C offset) [{source}]{suffix}"
-            )
-
-        sp = corrected_c if corrected_c is not None else scheduled_c
-        sp_str = f"{sp:.1f}°C" if sp is not None else "?"
-        return f"{mode} @ {sp_str} [{source}]{suffix}"
+        level = last.get("comfort_level", "?")
+        source = last.get("comfort_source", "")
+        commanded_sp = last.get("commanded_setpoint")
+        command_issued = last.get("command_issued", False)
+        suffix = " ✓" if command_issued else ""
+        if commanded_sp is not None:
+            return f"level {level} → {commanded_sp:.1f}°C [{source}]{suffix}"
+        return f"level {level} suppress [{source}]"
 
     @property
     def extra_state_attributes(self) -> dict:
@@ -160,7 +308,7 @@ class ClimateMLZoneDecisionLog(CoordinatorEntity[HomeClimateMlCoordinator], Sens
 
 
 class ClimateMLZoneCurrentBlock(CoordinatorEntity[HomeClimateMlCoordinator], SensorEntity):
-    """Active schedule block for the zone — mode and setpoint."""
+    """Active schedule block for the zone — comfort level and time range."""
 
     _attr_should_poll = False
     _attr_entity_category = EntityCategory.DIAGNOSTIC
@@ -170,21 +318,17 @@ class ClimateMLZoneCurrentBlock(CoordinatorEntity[HomeClimateMlCoordinator], Sen
         self._zone_id = zone["id"]
         self._attr_name = f"ML — {zone['name']} Current Schedule Block"
         self._attr_unique_id = f"{DOMAIN}_{self._zone_id}_current_block"
-        self._attr_device_info = _device_info(zone)
+        self._attr_device_info = _zone_device(zone)
 
     @property
     def native_value(self) -> str | None:
         block = self.coordinator.get_current_block(self._zone_id)
         if block is None:
-            return "off (unscheduled)"
-        mode = block["mode"]
-        sp = block.get("setpoint_c")
+            return "unscheduled"
+        level = block["comfort_level"]
         start = block["start"].strftime("%H:%M")
         end = block["end"].strftime("%H:%M")
-        if mode == "off":
-            return f"off ({start}–{end})"
-        sp_str = f"{sp:.1f}°C" if sp is not None else "?"
-        return f"{mode} @ {sp_str} ({start}–{end})"
+        return f"level {level} ({start}–{end})"
 
     @property
     def extra_state_attributes(self) -> dict:
@@ -192,8 +336,7 @@ class ClimateMLZoneCurrentBlock(CoordinatorEntity[HomeClimateMlCoordinator], Sen
         if block is None:
             return {}
         return {
-            "mode": block["mode"],
-            "setpoint_c": block.get("setpoint_c"),
+            "comfort_level": block["comfort_level"],
             "start": block["start"].strftime("%H:%M"),
             "end": block["end"].strftime("%H:%M"),
         }
@@ -211,7 +354,7 @@ class ClimateMLZoneNextTransition(CoordinatorEntity[HomeClimateMlCoordinator], S
         self._zone_id = zone["id"]
         self._attr_name = f"ML — {zone['name']} Next Schedule Transition"
         self._attr_unique_id = f"{DOMAIN}_{self._zone_id}_next_transition"
-        self._attr_device_info = _device_info(zone)
+        self._attr_device_info = _zone_device(zone)
 
     @property
     def native_value(self) -> datetime | None:

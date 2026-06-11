@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS overrides (
     expires_at TEXT NOT NULL,
     setpoint_c REAL,
     mode TEXT,
+    comfort_level INTEGER,
     expired_at TEXT,
     expire_reason TEXT
 );
@@ -62,11 +63,38 @@ CREATE TABLE IF NOT EXISTS user_changes (
     change_type TEXT NOT NULL,
     new_value TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS cycle_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp TEXT NOT NULL,
+    zone_id TEXT NOT NULL,
+    event_type TEXT NOT NULL,
+    comfort_level INTEGER,
+    room_temp_c REAL,
+    band_min REAL,
+    band_max REAL
+);
+CREATE TABLE IF NOT EXISTS weather_forecast (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    fetched_at TEXT NOT NULL,
+    forecast_json TEXT NOT NULL
+);
 CREATE INDEX IF NOT EXISTS idx_sensor_events_time ON sensor_events(timestamp);
 CREATE INDEX IF NOT EXISTS idx_sensor_events_zone ON sensor_events(zone_id);
 CREATE INDEX IF NOT EXISTS idx_decisions_time ON decisions(timestamp);
 CREATE INDEX IF NOT EXISTS idx_decisions_zone ON decisions(zone_id);
+CREATE INDEX IF NOT EXISTS idx_cycle_events_time ON cycle_events(timestamp);
+CREATE INDEX IF NOT EXISTS idx_cycle_events_zone ON cycle_events(zone_id);
 """
+
+_SCHEMA_MIGRATIONS = [
+    "ALTER TABLE decisions ADD COLUMN ml_predicted_action TEXT",
+    "ALTER TABLE decisions ADD COLUMN ml_confidence REAL",
+    "ALTER TABLE decisions ADD COLUMN comfort_level INTEGER",
+    "ALTER TABLE decisions ADD COLUMN band_min REAL",
+    "ALTER TABLE decisions ADD COLUMN band_max REAL",
+    "ALTER TABLE overrides ADD COLUMN comfort_level INTEGER",
+]
+
 
 def _connect(db_path: str) -> sqlite3.Connection:
     conn = sqlite3.connect(db_path)
@@ -85,6 +113,16 @@ class ClimateDataStore:
         os.makedirs(os.path.dirname(db_path), exist_ok=True)
         with _connect(db_path) as conn:
             conn.executescript(CREATE_TABLES)
+            self._migrate_schema(conn)
+
+    @staticmethod
+    def _migrate_schema(conn: sqlite3.Connection) -> None:
+        """Idempotent column additions — safe to run on every startup."""
+        for sql in _SCHEMA_MIGRATIONS:
+            try:
+                conn.execute(sql)
+            except sqlite3.OperationalError:
+                pass  # column already exists
 
     def log_decision(
         self,
@@ -98,17 +136,24 @@ class ClimateDataStore:
         corrected_setpoint_c: float | None,
         command_issued: bool,
         notes: str | None = None,
+        comfort_level: int | None = None,
+        band_min: float | None = None,
+        band_max: float | None = None,
+        ml_predicted_action: str | None = None,
+        ml_confidence: float | None = None,
     ) -> int:
         with _connect(self._db_path) as conn:
             cur = conn.execute(
                 """INSERT INTO decisions
                    (timestamp,zone_id,schedule_source,target_mode,target_setpoint_c,
                     external_temp_c,head_temp_c,computed_offset_c,corrected_setpoint_c,
-                    command_issued,notes)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                    command_issued,notes,comfort_level,band_min,band_max,
+                    ml_predicted_action,ml_confidence)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (_utcnow(), zone_id, schedule_source, target_mode, target_setpoint_c,
                  external_temp_c, head_temp_c, computed_offset_c, corrected_setpoint_c,
-                 int(command_issued), notes),
+                 int(command_issued), notes, comfort_level, band_min, band_max,
+                 ml_predicted_action, ml_confidence),
             )
             return cur.lastrowid
 
@@ -154,16 +199,39 @@ class ClimateDataStore:
                 (_utcnow(), zone_id, change_type, new_value),
             )
 
-    def open_override(
-        self, zone_id: str, setpoint_c: float | None, mode: str, expires_at: datetime
+    def log_cycle_event(
+        self,
+        zone_id: str,
+        event_type: str,
+        comfort_level: int | None = None,
+        room_temp_c: float | None = None,
+        band_min: float | None = None,
+        band_max: float | None = None,
     ) -> None:
-        # Close any open override for this zone first
+        with _connect(self._db_path) as conn:
+            conn.execute(
+                """INSERT INTO cycle_events
+                   (timestamp,zone_id,event_type,comfort_level,room_temp_c,band_min,band_max)
+                   VALUES (?,?,?,?,?,?,?)""",
+                (_utcnow(), zone_id, event_type, comfort_level, room_temp_c, band_min, band_max),
+            )
+
+    def log_weather_forecast(self, forecast_json: str) -> None:
+        with _connect(self._db_path) as conn:
+            conn.execute(
+                "INSERT INTO weather_forecast (fetched_at,forecast_json) VALUES (?,?)",
+                (_utcnow(), forecast_json),
+            )
+
+    def open_override(
+        self, zone_id: str, comfort_level: int, expires_at: datetime
+    ) -> None:
         self.close_override(zone_id, "updated")
         with _connect(self._db_path) as conn:
             conn.execute(
-                """INSERT INTO overrides (zone_id,started_at,expires_at,setpoint_c,mode)
-                   VALUES (?,?,?,?,?)""",
-                (zone_id, _utcnow(), expires_at.isoformat(), setpoint_c, mode),
+                """INSERT INTO overrides (zone_id,started_at,expires_at,comfort_level)
+                   VALUES (?,?,?,?)""",
+                (zone_id, _utcnow(), expires_at.isoformat(), comfort_level),
             )
 
     def close_override(self, zone_id: str, reason: str) -> None:
@@ -178,7 +246,7 @@ class ClimateDataStore:
         now = datetime.now(timezone.utc).isoformat()
         with _connect(self._db_path) as conn:
             rows = conn.execute(
-                """SELECT zone_id, setpoint_c, mode, expires_at FROM overrides
+                """SELECT zone_id, comfort_level, expires_at FROM overrides
                    WHERE expired_at IS NULL AND expires_at > ?""",
                 (now,),
             ).fetchall()
@@ -192,3 +260,5 @@ class ClimateDataStore:
             conn.execute("DELETE FROM sensor_events WHERE timestamp < ?", (sensor_cutoff,))
             conn.execute("DELETE FROM decisions WHERE timestamp < ?", (decision_cutoff,))
             conn.execute("DELETE FROM device_commands WHERE timestamp < ?", (decision_cutoff,))
+            conn.execute("DELETE FROM cycle_events WHERE timestamp < ?", (sensor_cutoff,))
+            conn.execute("DELETE FROM weather_forecast WHERE fetched_at < ?", (sensor_cutoff,))
