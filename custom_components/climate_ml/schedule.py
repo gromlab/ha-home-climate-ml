@@ -11,8 +11,7 @@ from .const import LOGGER
 class ScheduleBlock(TypedDict):
     start: time
     end: time
-    mode: str
-    setpoint_c: float | None
+    comfort_level: int
 
 
 class ScheduleError(Exception):
@@ -42,31 +41,17 @@ def _validate_zone_schedule(
     zone_id: str,
     day_type: str,
     blocks: list[dict],
-    setpoint_min: float,
-    setpoint_max: float,
 ) -> list[ScheduleBlock]:
     parsed: list[ScheduleBlock] = []
     for i, b in enumerate(blocks):
         try:
-            raw_mode = b["mode"]
-            if raw_mode is False:
-                mode = "off"
-            else:
-                mode = str(raw_mode).lower()
-            if mode not in ("off", "cool"):
-                raise ScheduleError(f"Invalid mode '{mode}'")
-            setpoint_c: float | None = None
-            if mode == "cool":
-                setpoint_c = float(b["setpoint_c"])
-                if not setpoint_min <= setpoint_c <= setpoint_max:
-                    raise ScheduleError(
-                        f"setpoint_c {setpoint_c} out of range [{setpoint_min}–{setpoint_max}]"
-                    )
+            comfort_level = int(b["comfort_level"])
+            if comfort_level not in range(1, 6):
+                raise ScheduleError(f"Invalid comfort_level {comfort_level} — must be 1–5")
             parsed.append({
                 "start": _parse_time(b["start"]),
                 "end": _parse_time(b["end"]),
-                "mode": mode,
-                "setpoint_c": setpoint_c,
+                "comfort_level": comfort_level,
             })
         except ScheduleError:
             raise
@@ -87,12 +72,8 @@ def _validate_zone_schedule(
     return parsed
 
 
-def parse_schedule_from_options(
-    zone_dict: dict,
-    setpoint_min: float,
-    setpoint_max: float,
-) -> dict[str, list[ScheduleBlock]]:
-    """Parse a zone's schedule from entry.options. Empty lists are allowed."""
+def parse_schedule_from_options(zone_dict: dict) -> dict[str, list[ScheduleBlock]]:
+    """Parse a zone's schedule from subentry data. Empty lists are allowed."""
     raw = zone_dict.get("schedule", {})
     result: dict[str, list[ScheduleBlock]] = {}
     for day_type in ("weekday", "weekend"):
@@ -102,7 +83,7 @@ def parse_schedule_from_options(
             continue
         try:
             result[day_type] = _validate_zone_schedule(
-                zone_dict.get("id", "unknown"), day_type, blocks, setpoint_min, setpoint_max
+                zone_dict.get("id", "unknown"), day_type, blocks
             )
         except ScheduleError as exc:
             LOGGER.warning(
@@ -113,17 +94,14 @@ def parse_schedule_from_options(
     return result
 
 
-def validate_block(
-    block: dict,
-    setpoint_min: float,
-    setpoint_max: float,
-) -> str | None:
+def validate_block(block: dict) -> str | None:
     """Validate a single schedule block dict. Returns error string or None if valid."""
     try:
-        raw_mode = block.get("mode", "")
-        mode = str(raw_mode).lower()
-        if mode not in ("off", "cool"):
-            return f"Invalid mode '{mode}' — must be 'off' or 'cool'"
+        comfort_level = block.get("comfort_level")
+        if comfort_level is None:
+            return "Comfort level is required"
+        if int(comfort_level) not in range(1, 6):
+            return f"Comfort level must be 1–5, got {comfort_level}"
         start_str = block.get("start", "")
         end_str = block.get("end", "")
         if not start_str or not end_str:
@@ -132,13 +110,6 @@ def validate_block(
         end = _parse_time(end_str)
         if end <= start:
             return "End time must be after start time"
-        if mode == "cool":
-            sp = block.get("setpoint_c")
-            if sp is None:
-                return "Setpoint is required for 'cool' mode"
-            sp = float(sp)
-            if not setpoint_min <= sp <= setpoint_max:
-                return f"Setpoint {sp}°C out of range [{setpoint_min}–{setpoint_max}]"
     except ScheduleError as exc:
         return str(exc)
     except (ValueError, TypeError) as exc:
@@ -150,25 +121,24 @@ def get_block(
     schedules: dict[str, dict[str, list[ScheduleBlock]]],
     zone_id: str,
     now: datetime,
-) -> tuple[str, float | None]:
-    """Return (mode, setpoint_c) for zone at given time. ('off', None) if unscheduled."""
+) -> int | None:
+    """Return active comfort_level for zone at given time, or None if unscheduled."""
     if zone_id not in schedules:
-        return "off", None
+        return None
 
     day_type = "weekend" if now.weekday() >= 5 else "weekday"
     zone = schedules[zone_id]
     blocks = zone.get(day_type) or zone.get("weekday", [])
 
     if not blocks:
-        return "off", None
+        return None
 
     current_time = now.time().replace(second=0, microsecond=0)
     for block in blocks:
         if block["start"] <= current_time < block["end"]:
-            return block["mode"], block["setpoint_c"]
+            return block["comfort_level"]
 
-    # Outside all defined blocks — intentionally off, not holding last block
-    return "off", None
+    return None
 
 
 def get_current_block_detail(
@@ -206,7 +176,6 @@ def get_next_transition(
     zone = schedules[zone_id]
 
     def _transitions_for_day(day: datetime) -> list[datetime]:
-        """Collect all block boundary datetimes for a given day."""
         day_type = "weekend" if day.weekday() >= 5 else "weekday"
         blocks = zone.get(day_type) or zone.get("weekday", [])
         result = []
@@ -219,7 +188,6 @@ def get_next_transition(
         if delta_days == 0:
             check_day = now
         else:
-            # DST-safe: use start_of_local_day on tomorrow
             tomorrow = now + timedelta(days=1)
             check_day = dt_util.start_of_local_day(tomorrow)
 

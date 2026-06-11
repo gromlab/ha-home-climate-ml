@@ -6,5 +6,6 @@
     "documentation": "https://github.com/gromlab/hacs-climate-ml",
     "iot_class": "cloud_polling",
     "issue_tracker": "https://github.com/gromlab/hacs-climate-ml/issues",
-    "version": "0.4.10"
+    "requirements": ["joblib>=1.0"],
+    "version": "0.5.0"
 }

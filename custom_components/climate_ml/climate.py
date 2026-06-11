@@ -7,6 +7,7 @@ from homeassistant.const import UnitOfTemperature
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
@@ -26,12 +27,11 @@ async def async_setup_entry(
         )
 
 
-class ClimateMLZone(CoordinatorEntity[HomeClimateMlCoordinator], ClimateEntity):
-    _attr_hvac_modes = [HVACMode.OFF, HVACMode.COOL]
+class ClimateMLZone(CoordinatorEntity[HomeClimateMlCoordinator], RestoreEntity, ClimateEntity):
+    _attr_hvac_modes = [HVACMode.AUTO, HVACMode.OFF]
     _attr_temperature_unit = UnitOfTemperature.CELSIUS
-    _attr_supported_features = ClimateEntityFeature.TARGET_TEMPERATURE
+    _attr_supported_features = ClimateEntityFeature(0)
     _attr_should_poll = False
-    _attr_target_temperature_step = 0.5
 
     def __init__(self, coordinator: HomeClimateMlCoordinator, zone: dict) -> None:
         super().__init__(coordinator)
@@ -45,13 +45,15 @@ class ClimateMLZone(CoordinatorEntity[HomeClimateMlCoordinator], ClimateEntity):
             model="Zone Controller",
         )
 
-    @property
-    def min_temp(self) -> float:
-        return self.coordinator.params.get("setpoint_min_c", 16.0)
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        if (last := await self.async_get_last_state()) is not None:
+            enabled = last.state != HVACMode.OFF
+            self.coordinator.set_zone_enabled(self._zone_id, enabled)
 
     @property
-    def max_temp(self) -> float:
-        return self.coordinator.params.get("setpoint_max_c", 28.0)
+    def _enabled(self) -> bool:
+        return self.coordinator.is_zone_enabled(self._zone_id)
 
     @property
     def zone_data(self):
@@ -66,48 +68,26 @@ class ClimateMLZone(CoordinatorEntity[HomeClimateMlCoordinator], ClimateEntity):
         return None
 
     @property
-    def target_temperature(self) -> float | None:
-        default = self.coordinator.params.get("default_setpoint_c", 21.0)
-        if d := self.zone_data:
-            return d.get("target_setpoint_c", default)
-        return default
-
-    @property
     def hvac_mode(self) -> HVACMode:
-        if d := self.zone_data:
-            mode = d.get("target_mode", "off")
-            return HVACMode.COOL if mode == "cool" else HVACMode.OFF
-        return HVACMode.OFF
+        return HVACMode.AUTO if self._enabled else HVACMode.OFF
 
     @property
     def extra_state_attributes(self) -> dict:
         if not (d := self.zone_data):
-            return {}
+            return {"enabled": self._enabled}
         return {
             "enabled": d.get("enabled", True),
             "offset_c": d.get("offset_c"),
-            "corrected_setpoint_c": d.get("corrected_setpoint_c"),
+            "commanded_setpoint": d.get("commanded_setpoint"),
             "head_temp_c": d.get("head_temp_c"),
             "override_active": d.get("override_active", False),
-            "schedule_source": d.get("schedule_source"),
+            "comfort_source": d.get("comfort_source"),
+            "active_comfort_level": d.get("active_comfort_level"),
+            "band_min": d.get("band_min"),
+            "band_max": d.get("band_max"),
             "error": d.get("error"),
         }
 
-    async def async_set_temperature(self, **kwargs) -> None:
-        temp = kwargs.get("temperature")
-        if temp is None:
-            return
-        mode = kwargs.get("hvac_mode")
-        current_mode = self.hvac_mode.value
-        self.coordinator.set_override(
-            self._zone_id,
-            float(temp),
-            mode.value if mode else current_mode,
-        )
-        self.async_write_ha_state()
-
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
-        default = self.coordinator.params.get("default_setpoint_c", 21.0)
-        current_setpoint = self.target_temperature or default
-        self.coordinator.set_override(self._zone_id, current_setpoint, hvac_mode.value)
+        self.coordinator.set_zone_enabled(self._zone_id, hvac_mode == HVACMode.AUTO)
         self.async_write_ha_state()

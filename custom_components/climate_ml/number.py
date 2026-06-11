@@ -49,16 +49,6 @@ _NUMBERS = [
         default=0.5,
     ),
     NumberDef(
-        key="default_setpoint_c",
-        name="Default Setpoint",
-        unique_suffix="default_setpoint",
-        native_min=16.0,
-        native_max=28.0,
-        native_step=0.5,
-        native_unit=UnitOfTemperature.CELSIUS,
-        default=21.0,
-    ),
-    NumberDef(
         key="sensor_guard_threshold_c",
         name="Sensor Guard Threshold",
         unique_suffix="sensor_guard_threshold",

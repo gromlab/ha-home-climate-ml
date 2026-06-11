@@ -20,7 +20,6 @@ CONTROLLER_DEFAULTS: dict = {
 DEFAULT_OPTIONS: dict = {
     "override_duration_minutes": 120,
     "setpoint_tolerance_c": 0.5,
-    "default_setpoint_c": 21.0,
     "sensor_guard_threshold_c": 3.0,
 }
 
@@ -32,3 +31,16 @@ _V5_REMOVED_OPTIONS = {
     "update_interval_minutes", "setpoint_min_c", "setpoint_max_c",
     "hallway_sensor", "outdoor_sensor",
 }
+
+# v0.5 comfort band defaults — editable per install via Controller → Configure
+COMFORT_LEVEL_DEFAULTS: list[dict] = [
+    {"level": 1, "name": "Sleep",    "min_c": 19.5, "max_c": 20.7},
+    {"level": 2, "name": "Comfort",  "min_c": 19.5, "max_c": 21.5},
+    {"level": 3, "name": "Relaxed",  "min_c": 19.5, "max_c": 22.0},
+    {"level": 4, "name": "Eco",      "min_c": 19.0, "max_c": 23.0},
+    {"level": 5, "name": "Vacation", "min_c": 16.0, "max_c": 24.0},
+]
+
+BAND_HYSTERESIS_DEFAULT: float = 0.2
+
+ML_MODEL_FILENAME: str = "model.pkl"

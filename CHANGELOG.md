@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.5.0] — Comfort Bands + ML Shadow Mode
+
+**Breaking changes:**
+- Schedule blocks no longer have `mode` or `setpoint_c` — replaced by `comfort_level` (integer 1–5); migration auto-converts existing blocks to level 3 (Relaxed)
+- Per-zone `Enabled` switch removed — zone enable/disable is now the climate entity's AUTO/OFF mode
+- Entry version bumped to 6; migration from v5 automatic on first start
+
+**New features:**
+- **Comfort bands**: 5 named levels (Sleep → Vacation) defined on the Controller with absolute min/max °C — no more per-zone setpoints
+- **Band-based control (cooling only)**: room > band_max+hysteresis → cool to band_max+offset; room < band_min → suppress (Samsung's internal hysteresis already stops the compressor; forcing cool on a cold room is avoided); in-band → suppress; sensor unavailable → suppress
+- **Vacation Mode switch** (controller device, `RestoreEntity`): overrides all zones to the configured vacation comfort level
+- **Per-zone Default Comfort Level** SELECT entity: persists across restarts; SELECT restore triggers immediate coordinator refresh to avoid first-tick default-3 issue
+- **Comfort Min / Comfort Max sensors** per zone: expose active band boundaries for graphing
+- **Energy Today sensor** (controller device): kWh since midnight, midnight snapshot via `async_track_time_change`
+- **ML Confidence sensor** per zone: 0.0 until a model is loaded; reflects per-tick shadow prediction confidence
+- **ML shadow mode**: if `/config/climate_ml/model.pkl` exists (joblib format), loaded at startup and run every tick alongside rule-based decisions — predictions logged in DB, never affect commands
+- **dT/dt logging**: rate of change of room temp (5-min and 15-min rolling) logged as sensor events each tick
+- **_system sensor event fix**: sun elevation/azimuth, ODU mode, outdoor temp, and HVAC power now correctly written to `sensor_events` (bug in previous versions silently dropped them)
+- **ODU mode logging fix**: logs actual state string instead of literal `0`
+- **Zone processing order** (Goal 6): tightest comfort bands (Level 1) processed first each tick
+- **Weather forecast persisted** to new `weather_forecast` table in SQLite store
+- **Door and window entity pickers** added to zone config form
+- **New DB tables**: `cycle_events`, `weather_forecast`; new `decisions` columns: `ml_predicted_action`, `ml_confidence`, `comfort_level`, `band_min`, `band_max`
+- Schema migrations are idempotent (new `_migrate_schema()` in store)
+- `prune()` extended to cover `cycle_events` and `weather_forecast`
+
 ## [0.4.10] — Optional entity selectors genuinely optional
 - **Bug**: `eva_in_entity`, `eva_out_entity`, and `occupancy_entity` in the zone config flow used `default=""` in the voluptuous schema — HA's EntitySelector interprets an empty-string default as a required field, forcing users to pick a sensor even when none is available
 - **Fix**: changed to `default=d.get("X") or vol.UNDEFINED` — `vol.UNDEFINED` tells voluptuous (and HA's frontend) the field has no default, making it genuinely skippable; the stored value remains `""` when omitted, which the integration already handles gracefully
