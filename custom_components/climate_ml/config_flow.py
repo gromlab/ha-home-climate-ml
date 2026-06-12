@@ -64,6 +64,15 @@ def _normalise_blocks(blocks: list) -> list:
     return result
 
 
+def _blocks_for_form(blocks: list) -> list:
+    """Convert stored blocks (comfort_level int) to ObjectSelector-compatible format (str)."""
+    return [
+        {**b, "comfort_level": str(b.get("comfort_level", 3))}
+        for b in blocks
+        if isinstance(b, dict)
+    ]
+
+
 _COMFORT_LEVEL_OPTIONS = ["1", "2", "3", "4", "5"]
 
 
@@ -254,15 +263,15 @@ class ZoneSubentryFlowHandler(ConfigSubentryFlow):
             "name": subentry.title,
             "head_entity": subentry.data.get("head_entity", ""),
             "sensor_entity": subentry.data.get("sensor_entity", ""),
-            "default_comfort_level": subentry.data.get("default_comfort_level", 3),
+            "default_comfort_level": str(subentry.data.get("default_comfort_level", 3)),
             "eva_in_entity": subentry.data.get("eva_in_entity", ""),
             "eva_out_entity": subentry.data.get("eva_out_entity", ""),
             "occupancy_entity": subentry.data.get("occupancy_entity", ""),
             "humidity_entity": subentry.data.get("humidity_entity", ""),
             "door_entity": subentry.data.get("door_entity", ""),
             "window_entity": subentry.data.get("window_entity", ""),
-            "weekday_blocks": list(subentry.data.get("schedule", {}).get("weekday", [])),
-            "weekend_blocks": list(subentry.data.get("schedule", {}).get("weekend", [])),
+            "weekday_blocks": _blocks_for_form(subentry.data.get("schedule", {}).get("weekday", [])),
+            "weekend_blocks": _blocks_for_form(subentry.data.get("schedule", {}).get("weekend", [])),
         }
         return self.async_show_form(
             step_id="reconfigure",
