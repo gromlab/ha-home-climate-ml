@@ -482,8 +482,16 @@ class HomeClimateMlCoordinator(DataUpdateCoordinator[dict[str, ZoneData]]):
         if ext_temp_c is None:
             # Sensor unavailable — suppress; do not act on stale data
             pass
-        elif ext_temp_c > band_max + self._band_hysteresis:
-            # Room too warm — cool towards band_max
+        elif ext_temp_c < band_min:
+            # Room too cold — suppress; Samsung's internal hysteresis already stops
+            # the compressor before the room drops this far.  Forcing a cool command
+            # here would run the compressor on a cold room.
+            pass
+        else:
+            # Room at or above band_min (in-band or above) — always target band_max + offset.
+            # When above band: this actively cools.
+            # When in-band: this raises the setpoint above the room so Samsung stops
+            # maintaining any stale lower setpoint and lets the room warm naturally.
             target_sp = max(setpoint_min, min(setpoint_max, band_max + offset_c))
             commanded_setpoint = target_sp
             if current_head_setpoint is None or abs(target_sp - current_head_setpoint) >= tolerance:
@@ -497,13 +505,6 @@ class HomeClimateMlCoordinator(DataUpdateCoordinator[dict[str, ZoneData]]):
                     {"entity_id": head_entity, "temperature": target_sp}, blocking=True,
                 )
                 command_issued = True
-        elif ext_temp_c < band_min:
-            # Room too cold — suppress; Samsung's internal hysteresis already stops
-            # the compressor when room drops below setpoint − ~1°C, so there is no
-            # demand to reduce.  Forcing cool mode here would run the compressor on
-            # a cold room.  Leave the head in its current state and let it warm naturally.
-            pass
-        # else: room in band — suppress
 
         # ML shadow prediction (non-blocking; never affects commands)
         ml_result = await self._ml_predict(zone_id, {
