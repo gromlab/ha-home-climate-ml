@@ -143,6 +143,9 @@ class HomeClimateMlCoordinator(DataUpdateCoordinator[dict[str, ZoneData]]):
     def get_next_transition(self, zone_id: str) -> datetime | None:
         return get_next_transition(self._schedules, zone_id, dt_util.now())
 
+    def get_zone_default_level(self, zone_id: str) -> int:
+        return self._zone_default_level.get(zone_id, 3)
+
     def get_zone_ml_confidence(self, zone_id: str) -> float:
         return self._zone_ml_confidence.get(zone_id, 0.0)
 
