@@ -324,7 +324,8 @@ class ClimateMLZoneCurrentBlock(CoordinatorEntity[HomeClimateMlCoordinator], Sen
     def native_value(self) -> str | None:
         block = self.coordinator.get_current_block(self._zone_id)
         if block is None:
-            return "unscheduled"
+            level = self.coordinator.get_zone_default_level(self._zone_id)
+            return f"default: level {level}"
         level = block["comfort_level"]
         start = block["start"].strftime("%H:%M")
         end = block["end"].strftime("%H:%M")
@@ -334,7 +335,10 @@ class ClimateMLZoneCurrentBlock(CoordinatorEntity[HomeClimateMlCoordinator], Sen
     def extra_state_attributes(self) -> dict:
         block = self.coordinator.get_current_block(self._zone_id)
         if block is None:
-            return {}
+            return {
+                "comfort_level": self.coordinator.get_zone_default_level(self._zone_id),
+                "source": "default",
+            }
         return {
             "comfort_level": block["comfort_level"],
             "start": block["start"].strftime("%H:%M"),
@@ -343,10 +347,9 @@ class ClimateMLZoneCurrentBlock(CoordinatorEntity[HomeClimateMlCoordinator], Sen
 
 
 class ClimateMLZoneNextTransition(CoordinatorEntity[HomeClimateMlCoordinator], SensorEntity):
-    """Timestamp of the next schedule block boundary for the zone."""
+    """Next schedule block boundary for the zone, or 'No schedule' when unscheduled."""
 
     _attr_should_poll = False
-    _attr_device_class = SensorDeviceClass.TIMESTAMP
     _attr_entity_category = EntityCategory.DIAGNOSTIC
 
     def __init__(self, coordinator: HomeClimateMlCoordinator, zone: dict) -> None:
@@ -357,5 +360,8 @@ class ClimateMLZoneNextTransition(CoordinatorEntity[HomeClimateMlCoordinator], S
         self._attr_device_info = _zone_device(zone)
 
     @property
-    def native_value(self) -> datetime | None:
-        return self.coordinator.get_next_transition(self._zone_id)
+    def native_value(self) -> str:
+        nxt = self.coordinator.get_next_transition(self._zone_id)
+        if nxt is None:
+            return "No schedule"
+        return nxt.strftime("%a %H:%M")
