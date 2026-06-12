@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.5.2] — Version bump (HACS release alignment)
+
+- No code changes; version bumped to align with HACS release detection
+
 ## [0.5.1] — Post-launch fixes
 
 - **Comfort level blank in reconfigure**: `ObjectSelector` select fields expect string values; stored `comfort_level` ints were not matching options, leaving the field blank when re-editing a schedule block or zone default. Fixed by converting at the display boundary (`_blocks_for_form`, `default_comfort_level` cast to `str`)
