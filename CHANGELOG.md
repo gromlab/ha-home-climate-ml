@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.5.1] — Post-launch fixes
+
+- **Comfort level blank in reconfigure**: `ObjectSelector` select fields expect string values; stored `comfort_level` ints were not matching options, leaving the field blank when re-editing a schedule block or zone default. Fixed by converting at the display boundary (`_blocks_for_form`, `default_comfort_level` cast to `str`)
+- **Sparse schedule blocks**: schedule validator required full 24h contiguous coverage from midnight; any gap caused the entire schedule to be silently discarded. Replaced with overlap-only check — blocks can now be placed at any time of day, gaps fall back to zone default comfort level
+- **Stale low setpoint**: when room was in-band, ClimateML suppressed commands but left the Samsung unit holding a stale low setpoint (e.g. 20°C). Unit kept cooling to that target even when the band permitted 22°C. Fix: always command `band_max + offset` when `room ≥ band_min`; Samsung stops cooling once room drops below the setpoint naturally
+- **Schedule block sensor**: shows `"default: level N"` instead of `"unscheduled"` when no block is active, so the active comfort profile is always visible
+- **Next Transition sensor**: returns `"No schedule"` instead of `"Unknown"` when the zone has no schedule blocks configured
+
 ## [0.5.0] — Comfort Bands + ML Shadow Mode
 
 **Breaking changes:**
