@@ -61,13 +61,13 @@ def _validate_zone_schedule(
             ) from exc
 
     parsed.sort(key=lambda b: b["start"])
-    prev_end = time(0, 0)
-    for b in parsed:
-        if b["start"] != prev_end:
+    for i in range(1, len(parsed)):
+        if parsed[i]["start"] < parsed[i - 1]["end"]:
             raise ScheduleError(
-                f"Zone '{zone_id}' {day_type}: gap or overlap at {b['start']} (expected {prev_end})"
+                f"Zone '{zone_id}' {day_type}: blocks overlap — "
+                f"{parsed[i - 1]['start']}–{parsed[i - 1]['end']} and "
+                f"{parsed[i]['start']}–{parsed[i]['end']}"
             )
-        prev_end = b["end"]
 
     return parsed
 
