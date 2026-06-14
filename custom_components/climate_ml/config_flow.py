@@ -1,7 +1,6 @@
 """Config flow for ClimateML."""
 from __future__ import annotations
 
-import copy
 import re
 from typing import Any
 
@@ -16,6 +15,7 @@ from homeassistant.config_entries import (
 )
 from homeassistant.core import callback
 from homeassistant.helpers.selector import (
+    BooleanSelector,
     EntitySelector,
     EntitySelectorConfig,
     NumberSelector,
@@ -27,7 +27,14 @@ from homeassistant.helpers.selector import (
     TextSelector,
 )
 
-from .const import BAND_HYSTERESIS_DEFAULT, COMFORT_LEVEL_DEFAULTS, CONTROLLER_DEFAULTS, DOMAIN
+from .const import (
+    CONTROLLER_DEFAULTS,
+    DEFAULT_SETPOINT_C,
+    DOMAIN,
+    ECO_TOLERANCE_DEFAULT,
+    IDLE_HEAD_THRESHOLD_DEFAULT,
+    VACATION_SETPOINT_DEFAULT,
+)
 
 
 def _slugify(name: str) -> str:
@@ -59,21 +66,26 @@ def _normalise_blocks(blocks: list) -> list:
         result.append({
             "start": _normalise_time(b.get("start", "00:00")),
             "end": _normalise_time(b.get("end", "00:00")),
-            "comfort_level": int(b.get("comfort_level", 3)),
+            "day_type": str(b.get("day_type", "weekday")),
+            "setpoint_c": float(b.get("setpoint_c", DEFAULT_SETPOINT_C)),
+            "mode": str(b.get("mode", "eco")),
         })
     return result
 
 
 def _blocks_for_form(blocks: list) -> list:
-    """Convert stored blocks (comfort_level int) to ObjectSelector-compatible format (str)."""
+    """Convert stored blocks to ObjectSelector-compatible format (numeric → str for selects)."""
     return [
-        {**b, "comfort_level": str(b.get("comfort_level", 3))}
+        {
+            "start": b.get("start", "00:00"),
+            "end": b.get("end", "00:00"),
+            "day_type": b.get("day_type", "weekday"),
+            "setpoint_c": float(b.get("setpoint_c", DEFAULT_SETPOINT_C)),
+            "mode": b.get("mode", "eco"),
+        }
         for b in blocks
         if isinstance(b, dict)
     ]
-
-
-_COMFORT_LEVEL_OPTIONS = ["1", "2", "3", "4", "5"]
 
 
 def _block_object_selector() -> ObjectSelector:
@@ -81,12 +93,22 @@ def _block_object_selector() -> ObjectSelector:
         "multiple": True,
         "label_field": "start",
         "fields": {
+            "day_type": {
+                "selector": {"select": {"options": ["weekday", "weekend"]}},
+                "required": True,
+                "label": "Day type",
+            },
             "start": {"selector": {"time": {}}, "required": True, "label": "Start"},
             "end": {"selector": {"time": {}}, "required": True, "label": "End"},
-            "comfort_level": {
-                "selector": {"select": {"options": _COMFORT_LEVEL_OPTIONS}},
+            "setpoint_c": {
+                "selector": {"number": {"min": 10.0, "max": 32.0, "step": 0.5, "mode": "box", "unit_of_measurement": "°C"}},
                 "required": True,
-                "label": "Comfort Level",
+                "label": "Setpoint (°C)",
+            },
+            "mode": {
+                "selector": {"select": {"options": ["eco", "comfort"]}},
+                "required": True,
+                "label": "Mode",
             },
         },
     })
@@ -94,18 +116,25 @@ def _block_object_selector() -> ObjectSelector:
 
 def _zone_schema(defaults: dict | None = None) -> vol.Schema:
     d = defaults or {}
-    block_sel = _block_object_selector()
     return vol.Schema({
         vol.Required("name", default=d.get("name", "")): TextSelector(),
         vol.Required("head_entity", default=d.get("head_entity", "")):
             EntitySelector(EntitySelectorConfig(domain="climate")),
         vol.Required("sensor_entity", default=d.get("sensor_entity", "")):
             EntitySelector(EntitySelectorConfig(domain="sensor")),
-        vol.Optional("default_comfort_level", default=str(d.get("default_comfort_level", 3))):
-            SelectSelector(SelectSelectorConfig(options=_COMFORT_LEVEL_OPTIONS)),
+        vol.Optional("default_setpoint_c", default=float(d.get("default_setpoint_c", DEFAULT_SETPOINT_C))):
+            NumberSelector(NumberSelectorConfig(min=10.0, max=32.0, step=0.5, mode=NumberSelectorMode.BOX)),
+        vol.Optional("default_mode", default=d.get("default_mode", "eco")):
+            SelectSelector(SelectSelectorConfig(options=["eco", "comfort"])),
+        vol.Optional("is_starvation_priority", default=d.get("is_starvation_priority", False)):
+            BooleanSelector(),
         vol.Optional("eva_in_entity", default=d.get("eva_in_entity") or vol.UNDEFINED):
             EntitySelector(EntitySelectorConfig(domain="sensor")),
         vol.Optional("eva_out_entity", default=d.get("eva_out_entity") or vol.UNDEFINED):
+            EntitySelector(EntitySelectorConfig(domain="sensor")),
+        vol.Optional("demand_delta_entity", default=d.get("demand_delta_entity") or vol.UNDEFINED):
+            EntitySelector(EntitySelectorConfig(domain="sensor")),
+        vol.Optional("head_thermal_delta_entity", default=d.get("head_thermal_delta_entity") or vol.UNDEFINED):
             EntitySelector(EntitySelectorConfig(domain="sensor")),
         vol.Optional("occupancy_entity", default=d.get("occupancy_entity") or vol.UNDEFINED):
             EntitySelector(EntitySelectorConfig(domain="binary_sensor")),
@@ -115,8 +144,7 @@ def _zone_schema(defaults: dict | None = None) -> vol.Schema:
             EntitySelector(EntitySelectorConfig(domain="binary_sensor")),
         vol.Optional("window_entity", default=d.get("window_entity") or vol.UNDEFINED):
             EntitySelector(EntitySelectorConfig(domain="binary_sensor")),
-        vol.Optional("weekday_blocks", default=d.get("weekday_blocks", [])): block_sel,
-        vol.Optional("weekend_blocks", default=d.get("weekend_blocks", [])): block_sel,
+        vol.Optional("blocks", default=d.get("blocks", [])): _block_object_selector(),
     })
 
 
@@ -132,34 +160,14 @@ def _controller_schema(defaults: dict | None = None) -> vol.Schema:
             NumberSelector(NumberSelectorConfig(min=10.0, max=20.0, step=0.5, mode=NumberSelectorMode.BOX)),
         vol.Optional("setpoint_max_c", default=sp_max):
             NumberSelector(NumberSelectorConfig(min=22.0, max=32.0, step=0.5, mode=NumberSelectorMode.BOX)),
-        vol.Optional("comfort_levels", default=d.get("comfort_levels", COMFORT_LEVEL_DEFAULTS)):
-            ObjectSelector({
-                "multiple": True,
-                "label_field": "name",
-                "fields": {
-                    "level": {
-                        "selector": {"number": {"min": 1, "max": 5, "step": 1, "mode": "box"}},
-                        "required": True,
-                        "label": "Level",
-                    },
-                    "name": {"selector": {"text": {}}, "required": True, "label": "Name"},
-                    "min_c": {
-                        "selector": {"number": {"min": 10.0, "max": 28.0, "step": 0.1, "mode": "box", "unit_of_measurement": "°C"}},
-                        "required": True,
-                        "label": "Min (°C)",
-                    },
-                    "max_c": {
-                        "selector": {"number": {"min": 10.0, "max": 30.0, "step": 0.1, "mode": "box", "unit_of_measurement": "°C"}},
-                        "required": True,
-                        "label": "Max (°C)",
-                    },
-                },
-            }),
-        vol.Optional("vacation_comfort_level",
-                     default=str(d.get("vacation_comfort_level", 5))):
-            SelectSelector(SelectSelectorConfig(options=_COMFORT_LEVEL_OPTIONS)),
-        vol.Optional("band_hysteresis_c",
-                     default=d.get("band_hysteresis_c", BAND_HYSTERESIS_DEFAULT)):
+        vol.Optional("vacation_setpoint_c",
+                     default=float(d.get("vacation_setpoint_c", VACATION_SETPOINT_DEFAULT))):
+            NumberSelector(NumberSelectorConfig(min=18.0, max=28.0, step=0.5, mode=NumberSelectorMode.BOX)),
+        vol.Optional("idle_head_threshold_minutes",
+                     default=int(d.get("idle_head_threshold_minutes", IDLE_HEAD_THRESHOLD_DEFAULT))):
+            NumberSelector(NumberSelectorConfig(min=15, max=180, step=5, mode=NumberSelectorMode.BOX)),
+        vol.Optional("eco_tolerance_c",
+                     default=float(d.get("eco_tolerance_c", ECO_TOLERANCE_DEFAULT))):
             NumberSelector(NumberSelectorConfig(min=0.0, max=2.0, step=0.1, mode=NumberSelectorMode.BOX)),
         vol.Optional("odu_mode_entity", default=d.get("odu_mode_entity", "")):
             EntitySelector(EntitySelectorConfig(domain="sensor")),
@@ -181,7 +189,7 @@ def _controller_schema(defaults: dict | None = None) -> vol.Schema:
 # ---------------------------------------------------------------------------
 
 class ClimateMLConfigFlow(ConfigFlow, domain=DOMAIN):
-    VERSION = 6
+    VERSION = 7
 
     @classmethod
     @callback
@@ -263,15 +271,18 @@ class ZoneSubentryFlowHandler(ConfigSubentryFlow):
             "name": subentry.title,
             "head_entity": subentry.data.get("head_entity", ""),
             "sensor_entity": subentry.data.get("sensor_entity", ""),
-            "default_comfort_level": str(subentry.data.get("default_comfort_level", 3)),
+            "default_setpoint_c": float(subentry.data.get("default_setpoint_c", DEFAULT_SETPOINT_C)),
+            "default_mode": subentry.data.get("default_mode", "eco"),
+            "is_starvation_priority": bool(subentry.data.get("is_starvation_priority", False)),
             "eva_in_entity": subentry.data.get("eva_in_entity", ""),
             "eva_out_entity": subentry.data.get("eva_out_entity", ""),
+            "demand_delta_entity": subentry.data.get("demand_delta_entity", ""),
+            "head_thermal_delta_entity": subentry.data.get("head_thermal_delta_entity", ""),
             "occupancy_entity": subentry.data.get("occupancy_entity", ""),
             "humidity_entity": subentry.data.get("humidity_entity", ""),
             "door_entity": subentry.data.get("door_entity", ""),
             "window_entity": subentry.data.get("window_entity", ""),
-            "weekday_blocks": _blocks_for_form(subentry.data.get("schedule", {}).get("weekday", [])),
-            "weekend_blocks": _blocks_for_form(subentry.data.get("schedule", {}).get("weekend", [])),
+            "blocks": _blocks_for_form(subentry.data.get("schedule", {}).get("blocks", [])),
         }
         return self.async_show_form(
             step_id="reconfigure",
@@ -282,20 +293,22 @@ class ZoneSubentryFlowHandler(ConfigSubentryFlow):
 
 def _zone_data_from_input(user_input: dict[str, Any]) -> dict[str, Any]:
     """Build zone subentry data dict from validated form input."""
-    dcl_raw = user_input.get("default_comfort_level", "3")
     return {
         "head_entity": user_input.get("head_entity", ""),
         "sensor_entity": user_input.get("sensor_entity", ""),
-        "default_comfort_level": int(str(dcl_raw).split(" ")[0]) if dcl_raw else 3,
+        "default_setpoint_c": float(user_input.get("default_setpoint_c", DEFAULT_SETPOINT_C)),
+        "default_mode": str(user_input.get("default_mode", "eco")),
+        "is_starvation_priority": bool(user_input.get("is_starvation_priority", False)),
         "eva_in_entity": user_input.get("eva_in_entity", ""),
         "eva_out_entity": user_input.get("eva_out_entity", ""),
+        "demand_delta_entity": user_input.get("demand_delta_entity", ""),
+        "head_thermal_delta_entity": user_input.get("head_thermal_delta_entity", ""),
         "occupancy_entity": user_input.get("occupancy_entity", ""),
         "humidity_entity": user_input.get("humidity_entity", ""),
         "door_entity": user_input.get("door_entity", ""),
         "window_entity": user_input.get("window_entity", ""),
         "schedule": {
-            "weekday": _normalise_blocks(user_input.get("weekday_blocks") or []),
-            "weekend": _normalise_blocks(user_input.get("weekend_blocks") or []),
+            "blocks": _normalise_blocks(user_input.get("blocks") or []),
         },
     }
 
@@ -338,24 +351,13 @@ class ControllerSubentryFlowHandler(ConfigSubentryFlow):
 
     @staticmethod
     def _clean_data(user_input: dict[str, Any]) -> dict[str, Any]:
-        raw_levels = user_input.get("comfort_levels") or COMFORT_LEVEL_DEFAULTS
-        comfort_levels = []
-        for cl in raw_levels:
-            if isinstance(cl, dict):
-                comfort_levels.append({
-                    "level": int(cl.get("level", 3)),
-                    "name": str(cl.get("name", "")),
-                    "min_c": float(cl.get("min_c", 19.5)),
-                    "max_c": float(cl.get("max_c", 22.0)),
-                })
-        vcl_raw = user_input.get("vacation_comfort_level", "5")
         return {
             "update_interval_minutes": int(user_input.get("update_interval_minutes", CONTROLLER_DEFAULTS["update_interval_minutes"])),
             "setpoint_min_c": float(user_input.get("setpoint_min_c", CONTROLLER_DEFAULTS["setpoint_min_c"])),
             "setpoint_max_c": float(user_input.get("setpoint_max_c", CONTROLLER_DEFAULTS["setpoint_max_c"])),
-            "comfort_levels": comfort_levels or COMFORT_LEVEL_DEFAULTS,
-            "vacation_comfort_level": int(str(vcl_raw).split(" ")[0]) if vcl_raw else 5,
-            "band_hysteresis_c": float(user_input.get("band_hysteresis_c", BAND_HYSTERESIS_DEFAULT)),
+            "vacation_setpoint_c": float(user_input.get("vacation_setpoint_c", VACATION_SETPOINT_DEFAULT)),
+            "idle_head_threshold_minutes": int(user_input.get("idle_head_threshold_minutes", IDLE_HEAD_THRESHOLD_DEFAULT)),
+            "eco_tolerance_c": float(user_input.get("eco_tolerance_c", ECO_TOLERANCE_DEFAULT)),
             "odu_mode_entity": user_input.get("odu_mode_entity", ""),
             "outdoor_temp_entity": user_input.get("outdoor_temp_entity", ""),
             "extra_temp_entities": user_input.get("extra_temp_entities") or [],

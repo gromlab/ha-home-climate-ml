@@ -11,7 +11,13 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
 
-from .const import DOMAIN
+from .const import (
+    DEFAULT_OPTIONS,
+    DOMAIN,
+    ECO_TOLERANCE_DEFAULT,
+    IDLE_HEAD_THRESHOLD_DEFAULT,
+    VACATION_SETPOINT_DEFAULT,
+)
 from .coordinator import HomeClimateMlCoordinator
 
 
@@ -36,7 +42,7 @@ _NUMBERS = [
         native_max=480,
         native_step=15,
         native_unit=UnitOfTime.MINUTES,
-        default=120,
+        default=DEFAULT_OPTIONS["override_duration_minutes"],
     ),
     NumberDef(
         key="setpoint_tolerance_c",
@@ -46,7 +52,7 @@ _NUMBERS = [
         native_max=2.0,
         native_step=0.1,
         native_unit=UnitOfTemperature.CELSIUS,
-        default=0.5,
+        default=DEFAULT_OPTIONS["setpoint_tolerance_c"],
     ),
     NumberDef(
         key="sensor_guard_threshold_c",
@@ -56,7 +62,37 @@ _NUMBERS = [
         native_max=10.0,
         native_step=0.5,
         native_unit=UnitOfTemperature.CELSIUS,
-        default=3.0,
+        default=DEFAULT_OPTIONS["sensor_guard_threshold_c"],
+    ),
+    NumberDef(
+        key="vacation_setpoint_c",
+        name="Vacation Setpoint",
+        unique_suffix="vacation_setpoint",
+        native_min=18.0,
+        native_max=28.0,
+        native_step=0.5,
+        native_unit=UnitOfTemperature.CELSIUS,
+        default=VACATION_SETPOINT_DEFAULT,
+    ),
+    NumberDef(
+        key="idle_head_threshold_minutes",
+        name="Idle Head Threshold",
+        unique_suffix="idle_head_threshold",
+        native_min=15,
+        native_max=180,
+        native_step=5,
+        native_unit=UnitOfTime.MINUTES,
+        default=IDLE_HEAD_THRESHOLD_DEFAULT,
+    ),
+    NumberDef(
+        key="eco_tolerance_c",
+        name="Eco Tolerance",
+        unique_suffix="eco_tolerance",
+        native_min=0.0,
+        native_max=2.0,
+        native_step=0.1,
+        native_unit=UnitOfTemperature.CELSIUS,
+        default=ECO_TOLERANCE_DEFAULT,
     ),
 ]
 

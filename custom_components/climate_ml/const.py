@@ -32,15 +32,20 @@ _V5_REMOVED_OPTIONS = {
     "hallway_sensor", "outdoor_sensor",
 }
 
-# v0.5 comfort band defaults — editable per install via Controller → Configure
-COMFORT_LEVEL_DEFAULTS: list[dict] = [
-    {"level": 1, "name": "Sleep",    "min_c": 19.5, "max_c": 20.7},
-    {"level": 2, "name": "Comfort",  "min_c": 19.5, "max_c": 21.5},
-    {"level": 3, "name": "Relaxed",  "min_c": 19.5, "max_c": 22.0},
-    {"level": 4, "name": "Eco",      "min_c": 19.0, "max_c": 23.0},
-    {"level": 5, "name": "Vacation", "min_c": 16.0, "max_c": 24.0},
-]
+# v0.6.0 direct setpoint defaults
+DEFAULT_SETPOINT_C: float = 22.0
+VACATION_SETPOINT_DEFAULT: float = 26.0
+IDLE_HEAD_THRESHOLD_DEFAULT: int = 60
+ECO_TOLERANCE_DEFAULT: float = 1.0
 
-BAND_HYSTERESIS_DEFAULT: float = 0.2
+# Starvation logic constants — see coordinator.py Starvation Logic section
+# REVIEW: single-priority-zone — these are tuned empirically; future ML will replace them
+# Sign convention: demand_delta and thermal_delta are negative when cooling is active
+STARVATION_DEMAND_THRESHOLD: float = -1.0   # °C — demand_delta must be below this to watch
+STARVATION_THERMAL_TARGET: float = -10.0    # °C — thermal_delta must reach this to exit suppression
+STARVATION_WATCH_SECONDS: int = 1800        # 30 min observation before triggering suppression
+STARVATION_SUPPRESS_SECONDS: int = 900      # 15 min max suppression per cycle
+STARVATION_COOLDOWN_SECONDS: int = 1800     # 30 min cooldown after suppression before re-watching
+STARVATION_MIN_SAMPLES: int = 4             # minimum readings in window before triggering
 
 ML_MODEL_FILENAME: str = "model.pkl"

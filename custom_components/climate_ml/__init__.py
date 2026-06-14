@@ -10,13 +10,14 @@ from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.event import async_track_time_change
 
 from .const import (
-    BAND_HYSTERESIS_DEFAULT,
-    COMFORT_LEVEL_DEFAULTS,
     CONTROLLER_DEFAULTS,
     DEFAULT_OPTIONS,
+    DEFAULT_SETPOINT_C,
     DOMAIN,
+    IDLE_HEAD_THRESHOLD_DEFAULT,
     LOGGER,
     ML_MODEL_FILENAME,
+    VACATION_SETPOINT_DEFAULT,
     _REMOVED_OPTIONS,
     _V5_REMOVED_OPTIONS,
 )
@@ -30,7 +31,6 @@ if TYPE_CHECKING:
 PLATFORMS: list[Platform] = [
     Platform.CLIMATE,
     Platform.NUMBER,
-    Platform.SELECT,
     Platform.SENSOR,
     Platform.SWITCH,
 ]
@@ -38,6 +38,9 @@ PLATFORMS: list[Platform] = [
 type ClimateMLConfigEntry = ConfigEntry
 
 _CONTROLLER_IDENTIFIER = "controller"
+
+# Comfort level → setpoint mapping used in v6→v7 migration
+_LEVEL_TO_SETPOINT: dict[int, float] = {1: 20.5, 2: 21.0, 3: 22.0, 4: 23.0, 5: 26.0}
 
 
 async def async_setup_entry(
@@ -57,14 +60,18 @@ async def async_setup_entry(
                 "name": s.title,
                 "head_entity": s.data.get("head_entity", ""),
                 "sensor_entity": s.data.get("sensor_entity", ""),
-                "default_comfort_level": s.data.get("default_comfort_level", 3),
+                "default_setpoint_c": float(s.data.get("default_setpoint_c", DEFAULT_SETPOINT_C)),
+                "default_mode": str(s.data.get("default_mode", "eco")),
+                "is_starvation_priority": bool(s.data.get("is_starvation_priority", False)),
                 "eva_in_entity": s.data.get("eva_in_entity", ""),
                 "eva_out_entity": s.data.get("eva_out_entity", ""),
+                "demand_delta_entity": s.data.get("demand_delta_entity", ""),
+                "head_thermal_delta_entity": s.data.get("head_thermal_delta_entity", ""),
                 "occupancy_entity": s.data.get("occupancy_entity", ""),
                 "humidity_entity": s.data.get("humidity_entity", ""),
                 "door_entity": s.data.get("door_entity", ""),
                 "window_entity": s.data.get("window_entity", ""),
-                "schedule": s.data.get("schedule", {"weekday": [], "weekend": []}),
+                "schedule": s.data.get("schedule", {"blocks": []}),
             })
             zone_subentry_map[zone_id] = s.subentry_id
         elif s.subentry_type == "controller":
@@ -111,6 +118,9 @@ async def async_setup_entry(
     params = {
         **{k: controller_config.get(k, v) for k, v in CONTROLLER_DEFAULTS.items()},
         **DEFAULT_OPTIONS,
+        "vacation_setpoint_c": float(controller_config.get("vacation_setpoint_c", VACATION_SETPOINT_DEFAULT)),
+        "idle_head_threshold_minutes": int(controller_config.get("idle_head_threshold_minutes", IDLE_HEAD_THRESHOLD_DEFAULT)),
+        "eco_tolerance_c": float(controller_config.get("eco_tolerance_c", 1.0)),
     }
 
     db_path = hass.config.path("climate_ml", "decisions.db")
@@ -299,9 +309,9 @@ async def async_migrate_entry(
                 continue
             new_data = {
                 **dict(subentry.data),
-                "comfort_levels": COMFORT_LEVEL_DEFAULTS,
+                "comfort_levels": _COMFORT_LEVEL_DEFAULTS_V5,
                 "vacation_comfort_level": 5,
-                "band_hysteresis_c": BAND_HYSTERESIS_DEFAULT,
+                "band_hysteresis_c": 0.5,
             }
             hass.config_entries.async_update_subentry(
                 entry, subentry, data=MappingProxyType(new_data)
@@ -321,4 +331,70 @@ async def async_migrate_entry(
         hass.config_entries.async_update_entry(entry, version=6)
         LOGGER.info("Migration to v6 complete")
 
+    if entry.version == 6:
+        from homeassistant.helpers import entity_registry as er
+
+        # Zone subentries: convert weekday/weekend blocks to flat blocks list with setpoint_c + mode
+        for subentry in list(entry.subentries.values()):
+            if subentry.subentry_type == "zone":
+                old_schedule = subentry.data.get("schedule", {})
+                new_blocks = []
+                for day_type in ("weekday", "weekend"):
+                    for b in old_schedule.get(day_type, []):
+                        level = int(b.get("comfort_level", 3))
+                        new_blocks.append({
+                            "start": b.get("start", "00:00"),
+                            "end": b.get("end", "00:00"),
+                            "day_type": day_type,
+                            "setpoint_c": _LEVEL_TO_SETPOINT.get(level, 22.0),
+                            "mode": "eco",  # migrate all blocks to eco by default
+                        })
+                old_level = int(subentry.data.get("default_comfort_level", 3))
+                new_data = {
+                    **dict(subentry.data),
+                    "default_setpoint_c": _LEVEL_TO_SETPOINT.get(old_level, DEFAULT_SETPOINT_C),
+                    "default_mode": "eco",
+                    "is_starvation_priority": False,
+                    "demand_delta_entity": "",
+                    "head_thermal_delta_entity": "",
+                    "schedule": {"blocks": new_blocks},
+                }
+                new_data.pop("default_comfort_level", None)
+                hass.config_entries.async_update_subentry(
+                    entry, subentry, data=MappingProxyType(new_data)
+                )
+
+            elif subentry.subentry_type == "controller":
+                vac_level = int(subentry.data.get("vacation_comfort_level", 5))
+                new_data = {
+                    **dict(subentry.data),
+                    "vacation_setpoint_c": _LEVEL_TO_SETPOINT.get(vac_level, VACATION_SETPOINT_DEFAULT),
+                    "idle_head_threshold_minutes": IDLE_HEAD_THRESHOLD_DEFAULT,
+                    "eco_tolerance_c": 1.0,
+                }
+                for key in ("comfort_levels", "vacation_comfort_level", "band_hysteresis_c"):
+                    new_data.pop(key, None)
+                hass.config_entries.async_update_subentry(
+                    entry, subentry, data=MappingProxyType(new_data)
+                )
+
+        # Remove stale select entities (comfort level selectors)
+        ereg = er.async_get(hass)
+        for entity_entry in er.async_entries_for_config_entry(ereg, entry.entry_id):
+            if entity_entry.domain == "select" and "comfort_level" in (entity_entry.unique_id or ""):
+                ereg.async_remove(entity_entry.entity_id)
+
+        hass.config_entries.async_update_entry(entry, version=7)
+        LOGGER.info("Migration to v7 complete (comfort bands → direct setpoints)")
+
     return True
+
+
+# Kept for v5→v6 migration path only — not used in v0.6.0 runtime
+_COMFORT_LEVEL_DEFAULTS_V5 = [
+    {"level": 1, "name": "Sleep", "min_c": 19.0, "max_c": 21.0},
+    {"level": 2, "name": "Comfort", "min_c": 20.0, "max_c": 22.0},
+    {"level": 3, "name": "Relaxed", "min_c": 21.0, "max_c": 23.0},
+    {"level": 4, "name": "Eco", "min_c": 22.0, "max_c": 24.0},
+    {"level": 5, "name": "Vacation", "min_c": 24.0, "max_c": 26.0},
+]

@@ -93,6 +93,12 @@ _SCHEMA_MIGRATIONS = [
     "ALTER TABLE decisions ADD COLUMN band_min REAL",
     "ALTER TABLE decisions ADD COLUMN band_max REAL",
     "ALTER TABLE overrides ADD COLUMN comfort_level INTEGER",
+    # v0.6.0 columns
+    "ALTER TABLE decisions ADD COLUMN active_setpoint_c REAL",
+    "ALTER TABLE decisions ADD COLUMN setpoint_source TEXT",
+    "ALTER TABLE decisions ADD COLUMN active_mode TEXT",
+    "ALTER TABLE decisions ADD COLUMN mode_source TEXT",
+    "ALTER TABLE decisions ADD COLUMN starvation_suppressed INTEGER DEFAULT 0",
 ]
 
 
@@ -127,7 +133,7 @@ class ClimateDataStore:
     def log_decision(
         self,
         zone_id: str,
-        schedule_source: str,
+        setpoint_source: str,
         target_mode: str,
         target_setpoint_c: float | None,
         external_temp_c: float | None,
@@ -136,24 +142,27 @@ class ClimateDataStore:
         corrected_setpoint_c: float | None,
         command_issued: bool,
         notes: str | None = None,
-        comfort_level: int | None = None,
-        band_min: float | None = None,
-        band_max: float | None = None,
+        active_setpoint_c: float | None = None,
+        active_mode: str | None = None,
+        mode_source: str | None = None,
         ml_predicted_action: str | None = None,
         ml_confidence: float | None = None,
+        starvation_suppressed: bool = False,
     ) -> int:
         with _connect(self._db_path) as conn:
             cur = conn.execute(
                 """INSERT INTO decisions
                    (timestamp,zone_id,schedule_source,target_mode,target_setpoint_c,
                     external_temp_c,head_temp_c,computed_offset_c,corrected_setpoint_c,
-                    command_issued,notes,comfort_level,band_min,band_max,
-                    ml_predicted_action,ml_confidence)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                (_utcnow(), zone_id, schedule_source, target_mode, target_setpoint_c,
+                    command_issued,notes,
+                    active_setpoint_c,setpoint_source,active_mode,mode_source,
+                    ml_predicted_action,ml_confidence,starvation_suppressed)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (_utcnow(), zone_id, setpoint_source, target_mode, target_setpoint_c,
                  external_temp_c, head_temp_c, computed_offset_c, corrected_setpoint_c,
-                 int(command_issued), notes, comfort_level, band_min, band_max,
-                 ml_predicted_action, ml_confidence),
+                 int(command_issued), notes,
+                 active_setpoint_c, setpoint_source, active_mode, mode_source,
+                 ml_predicted_action, ml_confidence, int(starvation_suppressed)),
             )
             return cur.lastrowid
 
@@ -224,14 +233,14 @@ class ClimateDataStore:
             )
 
     def open_override(
-        self, zone_id: str, comfort_level: int, expires_at: datetime
+        self, zone_id: str, setpoint_c: float, mode: str, expires_at: datetime
     ) -> None:
         self.close_override(zone_id, "updated")
         with _connect(self._db_path) as conn:
             conn.execute(
-                """INSERT INTO overrides (zone_id,started_at,expires_at,comfort_level)
-                   VALUES (?,?,?,?)""",
-                (zone_id, _utcnow(), expires_at.isoformat(), comfort_level),
+                """INSERT INTO overrides (zone_id,started_at,expires_at,setpoint_c,mode)
+                   VALUES (?,?,?,?,?)""",
+                (zone_id, _utcnow(), expires_at.isoformat(), setpoint_c, mode),
             )
 
     def close_override(self, zone_id: str, reason: str) -> None:
@@ -246,7 +255,7 @@ class ClimateDataStore:
         now = datetime.now(timezone.utc).isoformat()
         with _connect(self._db_path) as conn:
             rows = conn.execute(
-                """SELECT zone_id, comfort_level, expires_at FROM overrides
+                """SELECT zone_id, setpoint_c, mode, expires_at FROM overrides
                    WHERE expired_at IS NULL AND expires_at > ?""",
                 (now,),
             ).fetchall()

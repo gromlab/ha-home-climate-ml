@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.6.0] — Direct Setpoints + Predictive Idle + Starvation Logic
+
+**Breaking changes:**
+- Comfort bands removed — zones now use direct °C setpoints (`default_setpoint_c`)
+- Schedule blocks use new format: single `blocks` list with `{day_type, start, end, setpoint_c, mode}` replacing separate `weekday_blocks`/`weekend_blocks` with `comfort_level`
+- `select.default_comfort_level` entity removed — default mode now set via virtual thermostat preset
+- Entry version bumped to 7; migration from v6 automatic on first start (maps comfort levels 1–5 → °C)
+- `Platform.SELECT` removed; `_COMFORT_LEVEL_DEFAULTS` and `BAND_HYSTERESIS_DEFAULT` constants removed
+
+**New features:**
+- **Direct setpoints**: each zone has `default_setpoint_c` and `default_mode` (eco/comfort); schedules specify `setpoint_c` directly
+- **Two modes**: `eco` adds `eco_tolerance_c` deadband (default 1°C) above setpoint before cooling triggers; `comfort` triggers immediately at setpoint
+- **Occupancy auto-upgrade**: when occupied in eco mode, silently upgrades to comfort for that tick; logs `mode_source: "occupancy"` — ML training signal for anticipating occupancy pre-cooling
+- **Predictive idle shutdown**: when `dT/dt` predicts room won't reach trigger within `idle_head_threshold_minutes` (default 60 min), head turns off; turns back on automatically; anti-cycle guard requires ≥ 2 ticks on before allowing idle
+- **Virtual thermostat overhaul**: COOL/OFF + `target_temperature` + `preset_mode` (eco/comfort/override); setting temperature → 120-min comfort override; setting preset eco/comfort → cancels override and sets zone default mode
+- **Per-zone Enabled switch** re-added: `RestoreEntity`, default on for new zones
+- **Starvation logic** (front bedroom priority): if priority zone `demand_delta < −1°C` for 30 min and `head_thermal_delta` never reaches `−10°C`, all other zones raised to `head_current_temp + 1°C` for up to 15 min; exits on thermal target or timeout; 30-min cooldown; logged as `starvation_suppressed=True`
+- **New controller NUMBER entities**: `vacation_setpoint_c`, `idle_head_threshold_minutes`, `eco_tolerance_c`
+- **Decision log format**: shows `22.0°C eco → 21.3°C [schedule] ✓`, `idle [default]`, or `22.0°C eco suppress [schedule/occupancy]`
+- **DB schema**: new columns `active_setpoint_c`, `setpoint_source`, `active_mode`, `mode_source`, `starvation_suppressed`
+
 ## [0.5.2] — Version bump (HACS release alignment)
 
 - No code changes; version bumped to align with HACS release detection

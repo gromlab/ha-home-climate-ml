@@ -11,7 +11,9 @@ from .const import LOGGER
 class ScheduleBlock(TypedDict):
     start: time
     end: time
-    comfort_level: int
+    day_type: str   # "weekday" | "weekend"
+    setpoint_c: float
+    mode: str       # "eco" | "comfort"
 
 
 class ScheduleError(Exception):
@@ -39,69 +41,81 @@ def _normalise_time_str(s: str) -> str:
 
 def _validate_zone_schedule(
     zone_id: str,
-    day_type: str,
     blocks: list[dict],
 ) -> list[ScheduleBlock]:
     parsed: list[ScheduleBlock] = []
     for i, b in enumerate(blocks):
         try:
-            comfort_level = int(b["comfort_level"])
-            if comfort_level not in range(1, 6):
-                raise ScheduleError(f"Invalid comfort_level {comfort_level} — must be 1–5")
+            setpoint_c = float(b["setpoint_c"])
+            if not (10.0 <= setpoint_c <= 32.0):
+                raise ScheduleError(f"Invalid setpoint_c {setpoint_c} — must be 10–32°C")
+            mode = str(b.get("mode", "eco"))
+            if mode not in ("eco", "comfort"):
+                raise ScheduleError(f"Invalid mode '{mode}' — must be 'eco' or 'comfort'")
+            day_type = str(b.get("day_type", "weekday"))
+            if day_type not in ("weekday", "weekend"):
+                raise ScheduleError(f"Invalid day_type '{day_type}' — must be 'weekday' or 'weekend'")
             parsed.append({
                 "start": _parse_time(b["start"]),
                 "end": _parse_time(b["end"]),
-                "comfort_level": comfort_level,
+                "day_type": day_type,
+                "setpoint_c": setpoint_c,
+                "mode": mode,
             })
         except ScheduleError:
             raise
         except Exception as exc:
             raise ScheduleError(
-                f"Zone '{zone_id}' {day_type} block {i}: {exc}"
+                f"Zone '{zone_id}' block {i}: {exc}"
             ) from exc
 
-    parsed.sort(key=lambda b: b["start"])
-    for i in range(1, len(parsed)):
-        if parsed[i]["start"] < parsed[i - 1]["end"]:
-            raise ScheduleError(
-                f"Zone '{zone_id}' {day_type}: blocks overlap — "
-                f"{parsed[i - 1]['start']}–{parsed[i - 1]['end']} and "
-                f"{parsed[i]['start']}–{parsed[i]['end']}"
-            )
+    parsed.sort(key=lambda b: (b["day_type"], b["start"]))
+
+    # Overlap check within same day_type only
+    for day_type in ("weekday", "weekend"):
+        day_blocks = [b for b in parsed if b["day_type"] == day_type]
+        for i in range(1, len(day_blocks)):
+            if day_blocks[i]["start"] < day_blocks[i - 1]["end"]:
+                raise ScheduleError(
+                    f"Zone '{zone_id}' {day_type}: blocks overlap — "
+                    f"{day_blocks[i - 1]['start']}–{day_blocks[i - 1]['end']} and "
+                    f"{day_blocks[i]['start']}–{day_blocks[i]['end']}"
+                )
 
     return parsed
 
 
 def parse_schedule_from_options(zone_dict: dict) -> dict[str, list[ScheduleBlock]]:
-    """Parse a zone's schedule from subentry data. Empty lists are allowed."""
-    raw = zone_dict.get("schedule", {})
-    result: dict[str, list[ScheduleBlock]] = {}
-    for day_type in ("weekday", "weekend"):
-        blocks = raw.get(day_type, [])
-        if not blocks:
-            result[day_type] = []
-            continue
-        try:
-            result[day_type] = _validate_zone_schedule(
-                zone_dict.get("id", "unknown"), day_type, blocks
-            )
-        except ScheduleError as exc:
-            LOGGER.warning(
-                "Schedule error for zone %s %s: %s — treating as empty",
-                zone_dict.get("id"), day_type, exc,
-            )
-            result[day_type] = []
-    return result
+    """Parse a zone's schedule from subentry data. Returns {'blocks': [...]}."""
+    raw_blocks = zone_dict.get("schedule", {}).get("blocks", [])
+    if not raw_blocks:
+        return {"blocks": []}
+    try:
+        blocks = _validate_zone_schedule(zone_dict.get("id", "unknown"), raw_blocks)
+        return {"blocks": blocks}
+    except ScheduleError as exc:
+        LOGGER.warning(
+            "Schedule error for zone %s: %s — treating as empty",
+            zone_dict.get("id"), exc,
+        )
+        return {"blocks": []}
 
 
 def validate_block(block: dict) -> str | None:
     """Validate a single schedule block dict. Returns error string or None if valid."""
     try:
-        comfort_level = block.get("comfort_level")
-        if comfort_level is None:
-            return "Comfort level is required"
-        if int(comfort_level) not in range(1, 6):
-            return f"Comfort level must be 1–5, got {comfort_level}"
+        setpoint_c = block.get("setpoint_c")
+        if setpoint_c is None:
+            return "Setpoint is required"
+        sp = float(setpoint_c)
+        if not (10.0 <= sp <= 32.0):
+            return f"Setpoint must be 10–32°C, got {sp}"
+        mode = block.get("mode", "eco")
+        if mode not in ("eco", "comfort"):
+            return f"Mode must be 'eco' or 'comfort', got {mode}"
+        day_type = block.get("day_type", "weekday")
+        if day_type not in ("weekday", "weekend"):
+            return f"Day type must be 'weekday' or 'weekend', got {day_type}"
         start_str = block.get("start", "")
         end_str = block.get("end", "")
         if not start_str or not end_str:
@@ -121,22 +135,21 @@ def get_block(
     schedules: dict[str, dict[str, list[ScheduleBlock]]],
     zone_id: str,
     now: datetime,
-) -> int | None:
-    """Return active comfort_level for zone at given time, or None if unscheduled."""
+) -> ScheduleBlock | None:
+    """Return active ScheduleBlock for zone at given time, or None if unscheduled."""
     if zone_id not in schedules:
         return None
 
     day_type = "weekend" if now.weekday() >= 5 else "weekday"
-    zone = schedules[zone_id]
-    blocks = zone.get(day_type) or zone.get("weekday", [])
+    blocks = schedules[zone_id].get("blocks", [])
 
     if not blocks:
         return None
 
     current_time = now.time().replace(second=0, microsecond=0)
     for block in blocks:
-        if block["start"] <= current_time < block["end"]:
-            return block["comfort_level"]
+        if block["day_type"] == day_type and block["start"] <= current_time < block["end"]:
+            return block
 
     return None
 
@@ -146,19 +159,8 @@ def get_current_block_detail(
     zone_id: str,
     now: datetime,
 ) -> ScheduleBlock | None:
-    """Return the active ScheduleBlock for zone at now, or None if unscheduled."""
-    if zone_id not in schedules:
-        return None
-
-    day_type = "weekend" if now.weekday() >= 5 else "weekday"
-    zone = schedules[zone_id]
-    blocks = zone.get(day_type) or zone.get("weekday", [])
-
-    current_time = now.time().replace(second=0, microsecond=0)
-    for block in blocks:
-        if block["start"] <= current_time < block["end"]:
-            return block
-    return None
+    """Alias for get_block — returns the active ScheduleBlock or None."""
+    return get_block(schedules, zone_id, now)
 
 
 def get_next_transition(
@@ -173,15 +175,17 @@ def get_next_transition(
     if zone_id not in schedules:
         return None
 
-    zone = schedules[zone_id]
+    blocks = schedules[zone_id].get("blocks", [])
+    if not blocks:
+        return None
 
     def _transitions_for_day(day: datetime) -> list[datetime]:
         day_type = "weekend" if day.weekday() >= 5 else "weekday"
-        blocks = zone.get(day_type) or zone.get("weekday", [])
         result = []
         for b in blocks:
-            for t in (b["start"], b["end"]):
-                result.append(day.replace(hour=t.hour, minute=t.minute, second=0, microsecond=0))
+            if b["day_type"] == day_type:
+                for t in (b["start"], b["end"]):
+                    result.append(day.replace(hour=t.hour, minute=t.minute, second=0, microsecond=0))
         return result
 
     for delta_days in range(2):
