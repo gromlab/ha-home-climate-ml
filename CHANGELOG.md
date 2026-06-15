@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.6.6] — Fix post-0.6.5 crash (stale _zone_on_ticks reference)
+
+- **Critical fix:** AttributeError crash on every zone decision tick — `_zone_on_ticks` was removed from `__init__` in 0.6.5 but one reference survived in the disabled-zone path. All zones failed on every coordinator tick. Removed the stale reference.
+- Decision log shows `off [schedule]` for scheduled-off blocks (was `idle`)
+- Virtual thermostat `preset_mode` and `target_temperature` return `None` during scheduled-off windows
+
 ## [0.6.5] — Remove predictive idle; add schedule "off" mode
 
 - **Removed:** predictive idle shutdown logic (dT/dt, on-ticks, off-ticks, min on/off guards). The coordinator now always commands the active setpoint when a zone is enabled. Zone on/off is controlled only by the zone enabled switch and schedule "off" blocks — not by temperature prediction.
