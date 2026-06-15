@@ -69,6 +69,8 @@ class ClimateMLZone(CoordinatorEntity[HomeClimateMlCoordinator], ClimateEntity):
     @property
     def target_temperature(self) -> float | None:
         if d := self.zone_data:
+            if d.get("active_mode") == "off":
+                return None  # scheduled-off block — no meaningful target
             return d.get("active_setpoint_c")
         return None
 
@@ -77,7 +79,10 @@ class ClimateMLZone(CoordinatorEntity[HomeClimateMlCoordinator], ClimateEntity):
         if self.coordinator.has_active_override(self._zone_id):
             return "override"
         if d := self.zone_data:
-            return d.get("active_mode")  # "eco" or "comfort"; includes occupancy upgrades
+            mode = d.get("active_mode")
+            if mode in ("eco", "comfort"):
+                return mode
+            return None  # "off" and unknown modes don't map to a preset
         return None
 
     @property

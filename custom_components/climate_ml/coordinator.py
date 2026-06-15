@@ -15,10 +15,8 @@ from .const import (
     CONTROLLER_DEFAULTS,
     DEFAULT_SETPOINT_C,
     DOMAIN,
-    ECO_TOLERANCE_DEFAULT,
     EXTERNAL_SENSOR_MAX_C,
     EXTERNAL_SENSOR_MIN_C,
-    IDLE_HEAD_THRESHOLD_DEFAULT,
     LOGGER,
     STARVATION_COOLDOWN_SECONDS,
     STARVATION_DEMAND_THRESHOLD,
@@ -544,7 +542,6 @@ class HomeClimateMlCoordinator(DataUpdateCoordinator[dict[str, ZoneData]]):
                 await self.hass.services.async_call(
                     "climate", "turn_off", {"entity_id": head_entity}, blocking=True
                 )
-            self._zone_on_ticks[zone_id] = 0
             return ZoneData(
                 ext_temp_c=None, head_temp_c=None, offset_c=None,
                 active_setpoint_c=None, setpoint_source="disabled",

@@ -255,6 +255,8 @@ class ClimateMLZoneDecisionLog(CoordinatorEntity[HomeClimateMlCoordinator], Sens
 
         source_label = f"{sp_src}/{mode_src}" if mode_src == "occupancy" else sp_src
 
+        if mode == "off":
+            return f"off [{source_label}]"
         if idle:
             return f"idle [{source_label}]"
 

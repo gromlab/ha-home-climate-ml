@@ -5,6 +5,7 @@
 - **Removed:** predictive idle shutdown logic (dT/dt, on-ticks, off-ticks, min on/off guards). The coordinator now always commands the active setpoint when a zone is enabled. Zone on/off is controlled only by the zone enabled switch and schedule "off" blocks — not by temperature prediction.
 - **Added:** `mode: "off"` option for schedule blocks. A block with `mode: "off"` turns the head unit off for its time window, then hands back control when the block ends. Useful for overnight quiet hours or daytime absence windows.
 - **Removed:** `idle_head_threshold_minutes` and `eco_tolerance_c` no longer read in the zone control path (eco_tolerance_c was only used for the idle trigger threshold).
+- **Bug fix (post-release):** `_zone_on_ticks` stale reference in disabled-zone path caused `AttributeError` crash on every zone-disable tick — removed. Decision log now shows `off [schedule]` instead of `idle` for scheduled-off blocks. Virtual thermostat `preset_mode` and `target_temperature` return `None` during scheduled-off windows instead of an invalid preset and stale setpoint.
 
 ## [0.6.4] — Tighten cycle guards to 30 min on / 1 hr off
 
