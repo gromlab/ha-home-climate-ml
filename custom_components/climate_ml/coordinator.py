@@ -654,7 +654,11 @@ class HomeClimateMlCoordinator(DataUpdateCoordinator[dict[str, ZoneData]]):
                 )
                 offset_c = 0.0
             else:
-                offset_c = raw_offset
+                # Clamp to >= 0: only compensate when head sensor reads warmer than room
+                # (head sensor in a warm dead-zone). Never let negative offset lower the
+                # commanded setpoint below what the head already reads — that causes the
+                # Samsung to think it has achieved its target and stop cooling prematurely.
+                offset_c = max(0.0, raw_offset)
 
         setpoint_min = float(self._controller_config.get("setpoint_min_c", CONTROLLER_DEFAULTS["setpoint_min_c"]))
         setpoint_max = float(self._controller_config.get("setpoint_max_c", CONTROLLER_DEFAULTS["setpoint_max_c"]))

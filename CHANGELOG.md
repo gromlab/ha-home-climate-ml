@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.6.2] — Fix head offset clamping
+
+- **Bug fix:** head sensor offset is now clamped to `>= 0` — when the Samsung head's internal sensor reads colder than the room (normal during active cooling), the negative offset was lowering the commanded setpoint below the head's current reading, causing it to think it had achieved its target and stop cooling prematurely. Now offset only applies when the head sensor reads warmer than the room (compensating for dead-zone placement).
+
 ## [0.6.1] — Schedule day_type: add "both" option
 
 - Schedule blocks now support `day_type: "both"` — a single block applies to weekdays and weekends, removing the need to duplicate entries
