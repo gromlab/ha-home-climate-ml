@@ -116,8 +116,9 @@ class HomeClimateMlCoordinator(DataUpdateCoordinator[dict[str, ZoneData]]):
         # dT/dt tracking: deque of (epoch_seconds, temp_c) tuples, newest at index 0
         self._zone_last_temps: dict[str, deque] = {z["id"]: deque(maxlen=3) for z in zones}
 
-        # Idle shutdown anti-cycle: consecutive ticks with head commanded ON
+        # Anti-cycle guards: symmetric minimum on-time and off-time before state transitions
         self._zone_on_ticks: dict[str, int] = {z["id"]: 0 for z in zones}
+        self._zone_off_ticks: dict[str, int] = {z["id"]: 0 for z in zones}
 
         # Starvation logic state (in-memory only; resets to inactive on HA restart — intentional fail-open)
         # REVIEW: single-priority-zone — supports exactly one priority zone
@@ -744,6 +745,7 @@ class HomeClimateMlCoordinator(DataUpdateCoordinator[dict[str, ZoneData]]):
         else:
             dT_dt = self._get_dT_dt(zone_id)
             on_ticks = self._zone_on_ticks.get(zone_id, 0)
+            off_ticks = self._zone_off_ticks.get(zone_id, 0)
 
             if ext_temp_c > trigger_threshold:
                 idle = False  # above trigger — needs cooling now
@@ -755,7 +757,14 @@ class HomeClimateMlCoordinator(DataUpdateCoordinator[dict[str, ZoneData]]):
                 minutes_to_trigger = (trigger_threshold - ext_temp_c) / dT_dt
                 idle = (minutes_to_trigger > idle_threshold_minutes) and (on_ticks >= 2)
 
+            # Minimum off-time guard: head must be off ≥ 2 ticks before turning back on.
+            # Bypassed only when room is genuinely above trigger (urgent cooling needed now).
+            if not idle and head_state and head_state.state == "off" and off_ticks < 2:
+                if ext_temp_c <= trigger_threshold:
+                    idle = True  # enforce minimum off-time; not urgent enough to override
+
             if idle:
+                self._zone_off_ticks[zone_id] = off_ticks + 1
                 self._zone_on_ticks[zone_id] = 0
                 if head_state and head_state.state not in ("off", "unavailable"):
                     await self.hass.services.async_call(
@@ -784,6 +793,7 @@ class HomeClimateMlCoordinator(DataUpdateCoordinator[dict[str, ZoneData]]):
                     ml_predicted_action=ml_action, ml_confidence=ml_confidence,
                 )
             else:
+                self._zone_off_ticks[zone_id] = 0
                 self._zone_on_ticks[zone_id] = on_ticks + 1
                 commanded_setpoint = target_sp
                 if head_state and head_state.state == "off":
