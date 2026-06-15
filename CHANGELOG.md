@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.6.1] — Schedule day_type: add "both" option
+
+- Schedule blocks now support `day_type: "both"` — a single block applies to weekdays and weekends, removing the need to duplicate entries
+
 ## [0.6.0] — Direct Setpoints + Predictive Idle + Starvation Logic
 
 **Breaking changes:**

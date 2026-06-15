@@ -94,7 +94,7 @@ def _block_object_selector() -> ObjectSelector:
         "label_field": "start",
         "fields": {
             "day_type": {
-                "selector": {"select": {"options": ["weekday", "weekend"]}},
+                "selector": {"select": {"options": ["weekday", "weekend", "both"]}},
                 "required": True,
                 "label": "Day type",
             },

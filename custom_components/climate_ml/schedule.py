@@ -53,8 +53,8 @@ def _validate_zone_schedule(
             if mode not in ("eco", "comfort"):
                 raise ScheduleError(f"Invalid mode '{mode}' — must be 'eco' or 'comfort'")
             day_type = str(b.get("day_type", "weekday"))
-            if day_type not in ("weekday", "weekend"):
-                raise ScheduleError(f"Invalid day_type '{day_type}' — must be 'weekday' or 'weekend'")
+            if day_type not in ("weekday", "weekend", "both"):
+                raise ScheduleError(f"Invalid day_type '{day_type}' — must be 'weekday', 'weekend', or 'both'")
             parsed.append({
                 "start": _parse_time(b["start"]),
                 "end": _parse_time(b["end"]),
@@ -71,9 +71,18 @@ def _validate_zone_schedule(
 
     parsed.sort(key=lambda b: (b["day_type"], b["start"]))
 
-    # Overlap check within same day_type only
+    # Overlap check: expand "both" blocks into weekday+weekend entries for collision detection
+    expanded: list[ScheduleBlock] = []
+    for b in parsed:
+        if b["day_type"] == "both":
+            expanded.append({**b, "day_type": "weekday"})
+            expanded.append({**b, "day_type": "weekend"})
+        else:
+            expanded.append(b)
+    expanded.sort(key=lambda b: (b["day_type"], b["start"]))
+
     for day_type in ("weekday", "weekend"):
-        day_blocks = [b for b in parsed if b["day_type"] == day_type]
+        day_blocks = [b for b in expanded if b["day_type"] == day_type]
         for i in range(1, len(day_blocks)):
             if day_blocks[i]["start"] < day_blocks[i - 1]["end"]:
                 raise ScheduleError(
@@ -114,8 +123,8 @@ def validate_block(block: dict) -> str | None:
         if mode not in ("eco", "comfort"):
             return f"Mode must be 'eco' or 'comfort', got {mode}"
         day_type = block.get("day_type", "weekday")
-        if day_type not in ("weekday", "weekend"):
-            return f"Day type must be 'weekday' or 'weekend', got {day_type}"
+        if day_type not in ("weekday", "weekend", "both"):
+            return f"Day type must be 'weekday', 'weekend', or 'both', got {day_type}"
         start_str = block.get("start", "")
         end_str = block.get("end", "")
         if not start_str or not end_str:
@@ -148,7 +157,7 @@ def get_block(
 
     current_time = now.time().replace(second=0, microsecond=0)
     for block in blocks:
-        if block["day_type"] == day_type and block["start"] <= current_time < block["end"]:
+        if block["day_type"] in (day_type, "both") and block["start"] <= current_time < block["end"]:
             return block
 
     return None
@@ -183,7 +192,7 @@ def get_next_transition(
         day_type = "weekend" if day.weekday() >= 5 else "weekday"
         result = []
         for b in blocks:
-            if b["day_type"] == day_type:
+            if b["day_type"] in (day_type, "both"):
                 for t in (b["start"], b["end"]):
                     result.append(day.replace(hour=t.hour, minute=t.minute, second=0, microsecond=0))
         return result
