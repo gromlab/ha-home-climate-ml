@@ -50,8 +50,8 @@ def _validate_zone_schedule(
             if not (10.0 <= setpoint_c <= 32.0):
                 raise ScheduleError(f"Invalid setpoint_c {setpoint_c} — must be 10–32°C")
             mode = str(b.get("mode", "eco"))
-            if mode not in ("eco", "comfort"):
-                raise ScheduleError(f"Invalid mode '{mode}' — must be 'eco' or 'comfort'")
+            if mode not in ("eco", "comfort", "off"):
+                raise ScheduleError(f"Invalid mode '{mode}' — must be 'eco', 'comfort', or 'off'")
             day_type = str(b.get("day_type", "weekday"))
             if day_type not in ("weekday", "weekend", "both"):
                 raise ScheduleError(f"Invalid day_type '{day_type}' — must be 'weekday', 'weekend', or 'both'")
@@ -120,8 +120,8 @@ def validate_block(block: dict) -> str | None:
         if not (10.0 <= sp <= 32.0):
             return f"Setpoint must be 10–32°C, got {sp}"
         mode = block.get("mode", "eco")
-        if mode not in ("eco", "comfort"):
-            return f"Mode must be 'eco' or 'comfort', got {mode}"
+        if mode not in ("eco", "comfort", "off"):
+            return f"Mode must be 'eco', 'comfort', or 'off', got {mode}"
         day_type = block.get("day_type", "weekday")
         if day_type not in ("weekday", "weekend", "both"):
             return f"Day type must be 'weekday', 'weekend', or 'both', got {day_type}"

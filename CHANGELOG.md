@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.6.5] — Remove predictive idle; add schedule "off" mode
+
+- **Removed:** predictive idle shutdown logic (dT/dt, on-ticks, off-ticks, min on/off guards). The coordinator now always commands the active setpoint when a zone is enabled. Zone on/off is controlled only by the zone enabled switch and schedule "off" blocks — not by temperature prediction.
+- **Added:** `mode: "off"` option for schedule blocks. A block with `mode: "off"` turns the head unit off for its time window, then hands back control when the block ends. Useful for overnight quiet hours or daytime absence windows.
+- **Removed:** `idle_head_threshold_minutes` and `eco_tolerance_c` no longer read in the zone control path (eco_tolerance_c was only used for the idle trigger threshold).
+
 ## [0.6.4] — Tighten cycle guards to 30 min on / 1 hr off
 
 - Minimum on-time before allowing idle raised from 2 ticks (~10 min) to 6 ticks (30 min)

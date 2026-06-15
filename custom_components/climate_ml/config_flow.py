@@ -106,7 +106,7 @@ def _block_object_selector() -> ObjectSelector:
                 "label": "Setpoint (°C)",
             },
             "mode": {
-                "selector": {"select": {"options": ["eco", "comfort"]}},
+                "selector": {"select": {"options": ["eco", "comfort", "off"]}},
                 "required": True,
                 "label": "Mode",
             },

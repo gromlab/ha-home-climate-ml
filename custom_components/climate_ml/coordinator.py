@@ -116,9 +116,6 @@ class HomeClimateMlCoordinator(DataUpdateCoordinator[dict[str, ZoneData]]):
         # dT/dt tracking: deque of (epoch_seconds, temp_c) tuples, newest at index 0
         self._zone_last_temps: dict[str, deque] = {z["id"]: deque(maxlen=3) for z in zones}
 
-        # Anti-cycle guards: symmetric minimum on-time and off-time before state transitions
-        self._zone_on_ticks: dict[str, int] = {z["id"]: 0 for z in zones}
-        self._zone_off_ticks: dict[str, int] = {z["id"]: 0 for z in zones}
 
         # Starvation logic state (in-memory only; resets to inactive on HA restart — intentional fail-open)
         # REVIEW: single-priority-zone — supports exactly one priority zone
@@ -664,9 +661,6 @@ class HomeClimateMlCoordinator(DataUpdateCoordinator[dict[str, ZoneData]]):
         setpoint_min = float(self._controller_config.get("setpoint_min_c", CONTROLLER_DEFAULTS["setpoint_min_c"]))
         setpoint_max = float(self._controller_config.get("setpoint_max_c", CONTROLLER_DEFAULTS["setpoint_max_c"]))
         tolerance = float(self.params.get("setpoint_tolerance_c", 0.5))
-        idle_threshold_minutes = float(self.params.get("idle_head_threshold_minutes", IDLE_HEAD_THRESHOLD_DEFAULT))
-        eco_tolerance_c = float(self.params.get("eco_tolerance_c", ECO_TOLERANCE_DEFAULT))
-
         current_head_setpoint: float | None = None
         if head_state and head_state.state not in ("unavailable", "unknown"):
             try:
@@ -720,6 +714,35 @@ class HomeClimateMlCoordinator(DataUpdateCoordinator[dict[str, ZoneData]]):
         # --- Normal control ---
         setpoint_c, sp_source, mode, mode_source = self._resolve_setpoint(zone_id, now)
 
+        # Scheduled off block — shut head down for this time window
+        if mode == "off":
+            if head_state and head_state.state not in ("off", "unavailable"):
+                await self.hass.services.async_call(
+                    "climate", "turn_off", {"entity_id": head_entity}, blocking=True
+                )
+            ml_result = await self._ml_predict(zone_id, {"ext_temp_c": ext_temp_c, "setpoint_c": setpoint_c, "offset_c": offset_c, "mode": mode})
+            ml_action = ml_result.get("action") if ml_result else None
+            ml_confidence = ml_result.get("confidence") if ml_result else None
+            self._zone_ml_confidence[zone_id] = ml_confidence or 0.0
+            await self.hass.async_add_executor_job(
+                self._store.log_decision,
+                zone_id, sp_source, "scheduled_off",
+                None, ext_temp_c, head_temp_c, offset_c, None,
+                False, None,
+                setpoint_c, mode, mode_source, ml_action, ml_confidence, False,
+            )
+            return ZoneData(
+                ext_temp_c=ext_temp_c, head_temp_c=head_temp_c,
+                offset_c=offset_c if head_temp_c is not None else None,
+                active_setpoint_c=setpoint_c, setpoint_source=sp_source,
+                active_mode=mode, mode_source=mode_source,
+                commanded_setpoint=None, command_issued=False,
+                override_active=bool(self._overrides.get(zone_id)),
+                idle=True, starvation_suppressed=False,
+                error=None, enabled=True,
+                ml_predicted_action=ml_action, ml_confidence=ml_confidence,
+            )
+
         # Occupancy auto-upgrade: eco → comfort when occupied
         # Unavailable/unknown occupancy silently stays eco (intentional safe default)
         if mode == "eco":
@@ -731,9 +754,6 @@ class HomeClimateMlCoordinator(DataUpdateCoordinator[dict[str, ZoneData]]):
                     mode_source = "occupancy"
         # Note: mode_source stays "schedule"/"default" when mode was already "comfort"
 
-        eco_tol = eco_tolerance_c if mode == "eco" else 0.0
-        trigger_threshold = setpoint_c + eco_tol
-
         target_sp = max(setpoint_min, min(setpoint_max, setpoint_c + offset_c))
 
         commanded_setpoint = None
@@ -743,70 +763,19 @@ class HomeClimateMlCoordinator(DataUpdateCoordinator[dict[str, ZoneData]]):
             # Sensor unavailable — suppress; do not act on stale data
             pass
         else:
-            dT_dt = self._get_dT_dt(zone_id)
-            on_ticks = self._zone_on_ticks.get(zone_id, 0)
-            off_ticks = self._zone_off_ticks.get(zone_id, 0)
-
-            if ext_temp_c > trigger_threshold:
-                idle = False  # above trigger — needs cooling now
-            elif dT_dt is None:
-                idle = False  # cold start: don't shut down until we have data
-            elif dT_dt <= 0:
-                idle = on_ticks >= 6  # stable/cooling: idle only after ≥ 30 min on
-            else:
-                minutes_to_trigger = (trigger_threshold - ext_temp_c) / dT_dt
-                idle = (minutes_to_trigger > idle_threshold_minutes) and (on_ticks >= 6)
-
-            # Minimum off-time guard: head must be off ≥ 12 ticks (≥ 1 hr) before turning back on.
-            # Bypassed only when room is genuinely above trigger (urgent cooling needed now).
-            if not idle and head_state and head_state.state == "off" and off_ticks < 12:
-                if ext_temp_c <= trigger_threshold:
-                    idle = True  # enforce minimum off-time; not urgent enough to override
-
-            if idle:
-                self._zone_off_ticks[zone_id] = off_ticks + 1
-                self._zone_on_ticks[zone_id] = 0
-                if head_state and head_state.state not in ("off", "unavailable"):
-                    await self.hass.services.async_call(
-                        "climate", "turn_off", {"entity_id": head_entity}, blocking=True
-                    )
-                ml_result = await self._ml_predict(zone_id, {"ext_temp_c": ext_temp_c, "setpoint_c": setpoint_c, "offset_c": offset_c, "mode": mode})
-                ml_action = ml_result.get("action") if ml_result else None
-                ml_confidence = ml_result.get("confidence") if ml_result else None
-                self._zone_ml_confidence[zone_id] = ml_confidence or 0.0
-                await self.hass.async_add_executor_job(
-                    self._store.log_decision,
-                    zone_id, sp_source, "idle",
-                    None, ext_temp_c, head_temp_c, offset_c, None,
-                    False, None,
-                    setpoint_c, mode, mode_source, ml_action, ml_confidence, False,
+            # Always command the setpoint — no predictive idle; zone enable/disable controls on/off
+            commanded_setpoint = target_sp
+            if head_state and head_state.state == "off":
+                await self.hass.services.async_call(
+                    "climate", "set_hvac_mode",
+                    {"entity_id": head_entity, "hvac_mode": "cool"}, blocking=True,
                 )
-                return ZoneData(
-                    ext_temp_c=ext_temp_c, head_temp_c=head_temp_c,
-                    offset_c=offset_c if head_temp_c is not None else None,
-                    active_setpoint_c=setpoint_c, setpoint_source=sp_source,
-                    active_mode=mode, mode_source=mode_source,
-                    commanded_setpoint=None, command_issued=False,
-                    override_active=bool(self._overrides.get(zone_id)),
-                    idle=True, starvation_suppressed=False,
-                    error=None, enabled=True,
-                    ml_predicted_action=ml_action, ml_confidence=ml_confidence,
+            if current_head_setpoint is None or abs(target_sp - current_head_setpoint) >= tolerance:
+                await self.hass.services.async_call(
+                    "climate", "set_temperature",
+                    {"entity_id": head_entity, "temperature": target_sp}, blocking=True,
                 )
-            else:
-                self._zone_off_ticks[zone_id] = 0
-                self._zone_on_ticks[zone_id] = on_ticks + 1
-                commanded_setpoint = target_sp
-                if head_state and head_state.state == "off":
-                    await self.hass.services.async_call(
-                        "climate", "set_hvac_mode",
-                        {"entity_id": head_entity, "hvac_mode": "cool"}, blocking=True,
-                    )
-                if current_head_setpoint is None or abs(target_sp - current_head_setpoint) >= tolerance:
-                    await self.hass.services.async_call(
-                        "climate", "set_temperature",
-                        {"entity_id": head_entity, "temperature": target_sp}, blocking=True,
-                    )
-                    command_issued = True
+                command_issued = True
 
         ml_result = await self._ml_predict(zone_id, {"ext_temp_c": ext_temp_c, "setpoint_c": setpoint_c, "offset_c": offset_c, "mode": mode})
         ml_action = ml_result.get("action") if ml_result else None
