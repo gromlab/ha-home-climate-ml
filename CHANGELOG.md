@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.6.4] — Tighten cycle guards to 30 min on / 1 hr off
+
+- Minimum on-time before allowing idle raised from 2 ticks (~10 min) to 6 ticks (30 min)
+- Minimum off-time before turning back on raised from 2 ticks (~10 min) to 12 ticks (1 hr)
+- Both guards still bypass on genuine urgency (room above trigger threshold)
+
 ## [0.6.3] — Minimum off-time guard (anti-cycling)
 
 - **Bug fix / improvement:** head units now enforce a minimum of 2 coordinator ticks (~10 min) in the off state before turning back on. Previously, predictive idle could turn a head off and then immediately back on if conditions flip, causing rapid cycling. The guard is bypassed only when the room is already above the trigger threshold (genuine urgent cooling need), so emergency response is unaffected.

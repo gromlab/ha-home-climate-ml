@@ -752,14 +752,14 @@ class HomeClimateMlCoordinator(DataUpdateCoordinator[dict[str, ZoneData]]):
             elif dT_dt is None:
                 idle = False  # cold start: don't shut down until we have data
             elif dT_dt <= 0:
-                idle = on_ticks >= 2  # stable/cooling: idle only after minimum on-time
+                idle = on_ticks >= 6  # stable/cooling: idle only after ≥ 30 min on
             else:
                 minutes_to_trigger = (trigger_threshold - ext_temp_c) / dT_dt
-                idle = (minutes_to_trigger > idle_threshold_minutes) and (on_ticks >= 2)
+                idle = (minutes_to_trigger > idle_threshold_minutes) and (on_ticks >= 6)
 
-            # Minimum off-time guard: head must be off ≥ 2 ticks before turning back on.
+            # Minimum off-time guard: head must be off ≥ 12 ticks (≥ 1 hr) before turning back on.
             # Bypassed only when room is genuinely above trigger (urgent cooling needed now).
-            if not idle and head_state and head_state.state == "off" and off_ticks < 2:
+            if not idle and head_state and head_state.state == "off" and off_ticks < 12:
                 if ext_temp_c <= trigger_threshold:
                     idle = True  # enforce minimum off-time; not urgent enough to override
 
